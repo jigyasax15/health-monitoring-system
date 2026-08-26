@@ -5,7 +5,12 @@ function DDHSDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const fetchOverview = async () => {
+  const [alerts, setAlerts] = useState([]);
+  const [alertsLoading, setAlertsLoading] = useState(true);
+  const [alertsError, setAlertsError] = useState("");
+
+  const fetchDashboardData = async () => {
+    // Fetch overview
     try {
       setLoading(true);
       setError("");
@@ -24,10 +29,30 @@ function DDHSDashboard({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
+
+    // Fetch division alerts
+    try {
+      setAlertsLoading(true);
+      setAlertsError("");
+
+      const alertRes = await fetch("http://localhost:5000/api/ddhs/alerts");
+      const alertResult = await alertRes.json();
+
+      if (!alertRes.ok) {
+        throw new Error(alertResult.message || "Failed to load alerts");
+      }
+
+      setAlerts(alertResult.alerts || []);
+    } catch (err) {
+      console.error("Fetch DDHS alerts error:", err);
+      setAlertsError(err.message || "Could not load alerts");
+    } finally {
+      setAlertsLoading(false);
+    }
   };
 
   useEffect(() => {
-    fetchOverview();
+    fetchDashboardData();
   }, []);
 
   const totals = data?.totals || {
@@ -74,11 +99,11 @@ function DDHSDashboard({ user, onLogout }) {
 
           <button
             className="attendance-btn"
-            onClick={fetchOverview}
-            disabled={loading}
+            onClick={fetchDashboardData}
+            disabled={loading || alertsLoading}
             style={{ marginTop: 0 }}
           >
-            {loading ? "Refreshing..." : "Refresh Overview"}
+            {loading || alertsLoading ? "Refreshing..." : "Refresh Overview"}
           </button>
         </div>
 
@@ -94,7 +119,7 @@ function DDHSDashboard({ user, onLogout }) {
             <p className="stat-absent">{error}</p>
             <button
               className="attendance-btn"
-              onClick={fetchOverview}
+              onClick={fetchDashboardData}
               style={{ marginTop: "15px" }}
             >
               Try Again
@@ -187,12 +212,67 @@ function DDHSDashboard({ user, onLogout }) {
             <div className="alerts-card">
               <div className="alerts-heading">
                 <h2>Absenteeism Alerts</h2>
-                <span>0 Active</span>
+                <span>{alerts.length} Active</span>
               </div>
 
-              <p style={{ marginTop: "15px", color: "#6b7280" }}>
-                No active absenteeism alerts yet
-              </p>
+              {alertsLoading && (
+                <p style={{ marginTop: "15px", color: "#6b7280" }}>
+                  Loading division alerts...
+                </p>
+              )}
+
+              {!alertsLoading && alertsError && (
+                <p style={{ marginTop: "15px", color: "#dc2626" }}>
+                  {alertsError}
+                </p>
+              )}
+
+              {!alertsLoading && !alertsError && alerts.length === 0 && (
+                <p style={{ marginTop: "15px", color: "#6b7280" }}>
+                  No active absenteeism alerts
+                </p>
+              )}
+
+              {!alertsLoading && !alertsError && alerts.length > 0 && (
+                <div style={{ marginTop: "10px" }}>
+                  {alerts.map((alert) => (
+                    <div className="alert-item" key={alert._id || alert.id}>
+                      <div>
+                        <h3>{alert.doctorName}</h3>
+                        <p>
+                          <strong>{alert.healthCentre}</strong> • {alert.message} (
+                          {alert.consecutiveDays}{" "}
+                          {alert.consecutiveDays === 1 ? "day" : "days"} absence)
+                        </p>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "10px",
+                        }}
+                      >
+                        <strong
+                          style={{
+                            color:
+                              alert.severity === "critical"
+                                ? "#dc2626"
+                                : alert.severity === "high"
+                                ? "#ea580c"
+                                : "#d97706",
+                            textTransform: "uppercase",
+                            fontSize: "13px",
+                            letterSpacing: "0.5px",
+                          }}
+                        >
+                          {alert.severity}
+                        </strong>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         )}

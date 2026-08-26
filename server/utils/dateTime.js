@@ -47,8 +47,23 @@ function isAfterCutoff(cutoffTimeStr, referenceDate = new Date(), tz = timezone)
   return currentTime >= cutoffTimeStr;
 }
 
+/**
+ * Returns a date string YYYY-MM-DD for N days prior to the reference date in the specified timezone.
+ *
+ * @param {number} daysAgo
+ * @param {Date} [referenceDate=new Date()]
+ * @param {string} [tz=timezone]
+ * @returns {string} Date formatted as YYYY-MM-DD
+ */
+function getPreviousDateString(daysAgo = 1, referenceDate = new Date(), tz = timezone) {
+  const d = new Date(referenceDate);
+  d.setDate(d.getDate() - daysAgo);
+  return getTodayDateString(d, tz);
+}
+
 module.exports = {
   getTodayDateString,
   getCurrentTimeString,
   isAfterCutoff,
+  getPreviousDateString,
 };
