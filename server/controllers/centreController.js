@@ -1,19 +1,41 @@
 const Doctor = require("../models/Doctor");
 const Attendance = require("../models/Attendance");
+const HealthCentre = require("../models/HealthCentre");
 
-// Get daily attendance summary for PHC
+// Get daily attendance summary for a specific health centre
 const getPhcSummary = async (req, res) => {
   try {
-    const healthCentre = "PHC Mathura";
+    const { centre } = req.query;
+
+    if (!centre || !centre.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Health centre parameter is required",
+      });
+    }
+
+    const centreName = centre.trim();
+
+    // Verify centre exists in database
+    const healthCentreDoc = await HealthCentre.findOne({
+      name: centreName,
+    });
+
+    if (!healthCentreDoc) {
+      return res.status(404).json({
+        success: false,
+        message: "Health centre not found",
+      });
+    }
 
     const today = new Date().toISOString().split("T")[0];
 
     const doctors = await Doctor.find({
-      healthCentre,
+      healthCentre: healthCentreDoc.name,
     });
 
     const attendanceRecords = await Attendance.find({
-      healthCentre,
+      healthCentre: healthCentreDoc.name,
       date: today,
     });
 
@@ -46,7 +68,7 @@ const getPhcSummary = async (req, res) => {
 
     res.json({
       success: true,
-      healthCentre,
+      healthCentre: healthCentreDoc.name,
       date: today,
       totalDoctors: doctorData.length,
       present,

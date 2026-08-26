@@ -1,15 +1,28 @@
 import { useEffect, useState } from "react";
 
-function CentreAdminDashboard({ onLogout }) {
+function CentreAdminDashboard({ user, onLogout }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const assignedCentre = user?.healthCentre;
+
   useEffect(() => {
+    if (!assignedCentre) {
+      setError("No health centre assigned to this administrator account.");
+      setLoading(false);
+      return;
+    }
+
     const fetchSummary = async () => {
       try {
+        setLoading(true);
+        setError("");
+
         const response = await fetch(
-          "http://localhost:5000/api/phc-summary"
+          `http://localhost:5000/api/phc-summary?centre=${encodeURIComponent(
+            assignedCentre
+          )}`
         );
 
         const data = await response.json();
@@ -19,16 +32,16 @@ function CentreAdminDashboard({ onLogout }) {
         }
 
         setSummary(data);
-      } catch (error) {
-        console.error(error);
-        setError("Could not load PHC data");
+      } catch (err) {
+        console.error("Fetch summary error:", err);
+        setError(err.message || "Could not load health centre data");
       } finally {
         setLoading(false);
       }
     };
 
     fetchSummary();
-  }, []);
+  }, [assignedCentre]);
 
   return (
     <div className="admin-dashboard">
@@ -44,15 +57,26 @@ function CentreAdminDashboard({ onLogout }) {
       </header>
 
       <main className="dashboard-content">
-        {loading && <p>Loading dashboard...</p>}
+        {loading && (
+          <div className="table-card">
+            <p>Loading health centre dashboard...</p>
+          </div>
+        )}
 
-        {error && <p>{error}</p>}
+        {!loading && error && (
+          <div className="table-card">
+            <h2>Unable to Load Centre Data</h2>
+            <p className="stat-absent">{error}</p>
+          </div>
+        )}
 
         {!loading && !error && summary && (
           <>
             <div className="welcome-section">
               <h1>{summary.healthCentre}</h1>
-              <p>Daily Staff Monitoring Dashboard</p>
+              <p>
+                Daily Staff Monitoring Dashboard • {user?.name || "Admin"} ({user?.email || ""})
+              </p>
             </div>
 
             <div className="stats-grid">
@@ -111,7 +135,7 @@ function CentreAdminDashboard({ onLogout }) {
                             <span
                               className={`status-badge ${doctor.status
                                 .toLowerCase()
-                                .replace(" ", "-")}`}
+                                .replace(/\s+/g, "-")}`}
                             >
                               {doctor.status}
                             </span>
