@@ -189,6 +189,8 @@ function DoctorDashboard({ email, onLogout }) {
               className={
                 attendanceStatus === "Present"
                   ? "stat-present"
+                  : attendanceStatus === "Absent"
+                  ? "stat-absent"
                   : "stat-pending"
               }
             >

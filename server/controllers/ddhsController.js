@@ -1,11 +1,13 @@
 const HealthCentre = require("../models/HealthCentre");
 const Doctor = require("../models/Doctor");
 const Attendance = require("../models/Attendance");
+const { getTodayDateString } = require("../utils/dateTime");
+const { determineAttendanceStatus } = require("../utils/attendanceStatus");
 
 // Get division-wide overview statistics for DDHS
 const getDdhsOverview = async (req, res) => {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayDateString();
 
     // Find all active health centres
     const activeCentres = await HealthCentre.find({
@@ -36,9 +38,13 @@ const getDdhsOverview = async (req, res) => {
           (rec) => rec.doctorEmail === doc.email
         );
 
-        if (attendance && attendance.status === "Present") {
+        const status = determineAttendanceStatus(attendance, {
+          targetDate: today,
+        });
+
+        if (status === "Present") {
           present++;
-        } else if (attendance && attendance.status === "Absent") {
+        } else if (status === "Absent") {
           absent++;
         } else {
           notMarked++;
@@ -102,3 +108,4 @@ const getDdhsOverview = async (req, res) => {
 module.exports = {
   getDdhsOverview,
 };
+

@@ -1,6 +1,8 @@
 const Doctor = require("../models/Doctor");
 const Attendance = require("../models/Attendance");
 const HealthCentre = require("../models/HealthCentre");
+const { getTodayDateString } = require("../utils/dateTime");
+const { determineAttendanceStatus } = require("../utils/attendanceStatus");
 
 // Get daily attendance summary for a specific health centre
 const getPhcSummary = async (req, res) => {
@@ -28,7 +30,7 @@ const getPhcSummary = async (req, res) => {
       });
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayDateString();
 
     const doctors = await Doctor.find({
       healthCentre: healthCentreDoc.name,
@@ -44,13 +46,17 @@ const getPhcSummary = async (req, res) => {
         (record) => record.doctorEmail === doctor.email
       );
 
+      const status = determineAttendanceStatus(attendance, {
+        targetDate: today,
+      });
+
       return {
         id: doctor._id,
         name: doctor.name,
         email: doctor.email,
         department: doctor.department,
         healthCentre: doctor.healthCentre,
-        status: attendance ? attendance.status : "Not Marked",
+        status,
       };
     });
 
@@ -87,3 +93,4 @@ const getPhcSummary = async (req, res) => {
 module.exports = {
   getPhcSummary,
 };
+

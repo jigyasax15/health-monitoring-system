@@ -1,5 +1,7 @@
 const Attendance = require("../models/Attendance");
 const Doctor = require("../models/Doctor");
+const { getTodayDateString } = require("../utils/dateTime");
+const { determineAttendanceStatus } = require("../utils/attendanceStatus");
 
 // Mark daily attendance for a doctor
 const markAttendance = async (req, res) => {
@@ -26,7 +28,7 @@ const markAttendance = async (req, res) => {
       });
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayDateString();
 
     const existingAttendance = await Attendance.findOne({
       doctorEmail: normalizedEmail,
@@ -93,20 +95,24 @@ const getAllAttendance = async (req, res) => {
 // Get today's attendance for one doctor
 const getTodayAttendance = async (req, res) => {
   try {
-    const email = req.params.email.toLowerCase().trim();
+    const email = (req.params.email || "").toLowerCase().trim();
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayDateString();
 
     const attendance = await Attendance.findOne({
       doctorEmail: email,
       date: today,
     });
 
+    const derivedStatus = determineAttendanceStatus(attendance, {
+      targetDate: today,
+    });
+
     if (!attendance) {
       return res.json({
         success: true,
         marked: false,
-        status: "Not Marked",
+        status: derivedStatus,
       });
     }
 
@@ -129,3 +135,4 @@ module.exports = {
   getAllAttendance,
   getTodayAttendance,
 };
+
