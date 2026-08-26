@@ -56,6 +56,13 @@ const markAttendance = async (req, res) => {
       attendance: savedAttendance,
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Attendance already marked today",
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: error.message,
