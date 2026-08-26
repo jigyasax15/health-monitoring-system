@@ -1,72 +1,45 @@
-function DDHSDashboard({ onLogout }) {
-  const centres = [
-    {
-      id: 1,
-      name: "PHC Mathura",
-      type: "PHC",
-      doctors: 4,
-      present: 2,
-      absent: 1,
-      pending: 1,
-    },
-    {
-      id: 2,
-      name: "PHC Vrindavan",
-      type: "PHC",
-      doctors: 6,
-      present: 5,
-      absent: 1,
-      pending: 0,
-    },
-    {
-      id: 3,
-      name: "Upgraded PHC Govardhan",
-      type: "Upgraded PHC",
-      doctors: 5,
-      present: 5,
-      absent: 0,
-      pending: 0,
-    },
-    {
-      id: 4,
-      name: "Sub-Centre Raya",
-      type: "Sub-Centre",
-      doctors: 3,
-      present: 1,
-      absent: 2,
-      pending: 0,
-    },
-  ];
+import { useEffect, useState } from "react";
 
-  const totalDoctors = centres.reduce(
-    (total, centre) => total + centre.doctors,
-    0
-  );
+function DDHSDashboard({ user, onLogout }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const totalPresent = centres.reduce(
-    (total, centre) => total + centre.present,
-    0
-  );
+  const fetchOverview = async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-  const totalAbsent = centres.reduce(
-    (total, centre) => total + centre.absent,
-    0
-  );
+      const response = await fetch("http://localhost:5000/api/ddhs/overview");
+      const result = await response.json();
 
-  const alerts = [
-    {
-      id: 1,
-      doctor: "Dr. R Verma",
-      centre: "PHC Mathura",
-      message: "Absent today",
-    },
-    {
-      id: 2,
-      doctor: "Dr. K Gupta",
-      centre: "Sub-Centre Raya",
-      message: "Absent for 3 consecutive days",
-    },
-  ];
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to load division overview");
+      }
+
+      setData(result);
+    } catch (err) {
+      console.error("Fetch DDHS overview error:", err);
+      setError(err.message || "Could not load division overview data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOverview();
+  }, []);
+
+  const totals = data?.totals || {
+    activeHealthCentres: 0,
+    totalDoctors: 0,
+    present: 0,
+    absent: 0,
+    notMarked: 0,
+    attendancePercentage: 0,
+  };
+
+  const centres = data?.centres || [];
 
   return (
     <div className="admin-dashboard">
@@ -82,92 +55,147 @@ function DDHSDashboard({ onLogout }) {
       </header>
 
       <main className="dashboard-content">
-        <div className="welcome-section">
-          <h1>DDHS Monitoring Dashboard</h1>
-          <p>Division-wide healthcare monitoring</p>
+        <div
+          className="welcome-section"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "15px",
+          }}
+        >
+          <div>
+            <h1>DDHS Monitoring Dashboard</h1>
+            <p>
+              Division-wide healthcare monitoring • {user?.name || "DDHS Officer"}
+            </p>
+          </div>
+
+          <button
+            className="attendance-btn"
+            onClick={fetchOverview}
+            disabled={loading}
+            style={{ marginTop: 0 }}
+          >
+            {loading ? "Refreshing..." : "Refresh Overview"}
+          </button>
         </div>
 
-        <div className="stats-grid">
-          <div className="stat-card">
-            <p>Health Centres</p>
-            <h2>{centres.length}</h2>
+        {loading && !data && (
+          <div className="table-card">
+            <p>Loading division overview...</p>
           </div>
+        )}
 
-          <div className="stat-card">
-            <p>Total Doctors</p>
-            <h2>{totalDoctors}</h2>
+        {!loading && error && (
+          <div className="table-card">
+            <h2>Unable to Load Division Data</h2>
+            <p className="stat-absent">{error}</p>
+            <button
+              className="attendance-btn"
+              onClick={fetchOverview}
+              style={{ marginTop: "15px" }}
+            >
+              Try Again
+            </button>
           </div>
+        )}
 
-          <div className="stat-card">
-            <p>Present Today</p>
-            <h2 className="stat-present">{totalPresent}</h2>
-          </div>
-
-          <div className="stat-card">
-            <p>Absent Today</p>
-            <h2 className="stat-absent">{totalAbsent}</h2>
-          </div>
-        </div>
-
-        <div className="table-card">
-          <h2>Health Centre Overview</h2>
-
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Health Centre</th>
-                  <th>Type</th>
-                  <th>Doctors</th>
-                  <th>Present</th>
-                  <th>Absent</th>
-                  <th>Pending</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {centres.map((centre) => (
-                  <tr key={centre.id}>
-                    <td>
-                      <strong>{centre.name}</strong>
-                    </td>
-
-                    <td>{centre.type}</td>
-                    <td>{centre.doctors}</td>
-
-                    <td className="table-present">
-                      {centre.present}
-                    </td>
-
-                    <td className="table-absent">
-                      {centre.absent}
-                    </td>
-
-                    <td>{centre.pending}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="alerts-card">
-          <div className="alerts-heading">
-            <h2>Absenteeism Alerts</h2>
-            <span>{alerts.length} Active</span>
-          </div>
-
-          {alerts.map((alert) => (
-            <div className="alert-item" key={alert.id}>
-              <div>
-                <h3>{alert.doctor}</h3>
-                <p>{alert.centre}</p>
+        {data && !error && (
+          <>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <p>Health Centres</p>
+                <h2>{totals.activeHealthCentres}</h2>
               </div>
 
-              <strong>{alert.message}</strong>
+              <div className="stat-card">
+                <p>Total Doctors</p>
+                <h2>{totals.totalDoctors}</h2>
+              </div>
+
+              <div className="stat-card">
+                <p>Present Today</p>
+                <h2 className="stat-present">{totals.present}</h2>
+              </div>
+
+              <div className="stat-card">
+                <p>Absent Today</p>
+                <h2 className="stat-absent">{totals.absent}</h2>
+              </div>
+
+              <div className="stat-card">
+                <p>Not Marked</p>
+                <h2 className="stat-pending">{totals.notMarked}</h2>
+              </div>
+
+              <div className="stat-card">
+                <p>Attendance %</p>
+                <h2 className="stat-present">{totals.attendancePercentage}%</h2>
+              </div>
             </div>
-          ))}
-        </div>
+
+            <div className="table-card">
+              <h2>Health Centre Overview</h2>
+
+              {centres.length === 0 ? (
+                <p style={{ marginTop: "15px", color: "#6b7280" }}>
+                  No active health centres found in the division.
+                </p>
+              ) : (
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Health Centre</th>
+                        <th>Type</th>
+                        <th>District</th>
+                        <th>Total Doctors</th>
+                        <th>Present</th>
+                        <th>Absent</th>
+                        <th>Not Marked</th>
+                        <th>Attendance %</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {centres.map((centre) => (
+                        <tr key={centre.id}>
+                          <td>
+                            <strong>{centre.name}</strong>
+                          </td>
+
+                          <td>{centre.type}</td>
+                          <td>{centre.district}</td>
+                          <td>{centre.totalDoctors}</td>
+
+                          <td className="table-present">{centre.present}</td>
+
+                          <td className="table-absent">{centre.absent}</td>
+
+                          <td>{centre.notMarked}</td>
+                          <td>{centre.attendancePercentage}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="alerts-card">
+              <div className="alerts-heading">
+                <h2>Absenteeism Alerts</h2>
+                <span>0 Active</span>
+              </div>
+
+              <p style={{ marginTop: "15px", color: "#6b7280" }}>
+                No active absenteeism alerts yet
+              </p>
+            </div>
+          </>
+        )}
       </main>
     </div>
   );
