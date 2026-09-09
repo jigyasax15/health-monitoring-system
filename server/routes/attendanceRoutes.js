@@ -5,9 +5,20 @@ const {
   getAllAttendance,
   getTodayAttendance,
 } = require("../controllers/attendanceController");
+const {
+  authenticate,
+  authorizeRoles,
+} = require("../middleware/authMiddleware");
 
-router.post("/", markAttendance);
-router.get("/", getAllAttendance);
-router.get("/today/:email", getTodayAttendance);
+// All attendance routes require authentication
+router.use(authenticate);
+
+router.post("/", authorizeRoles("doctor"), markAttendance);
+router.get("/", authorizeRoles("centre-admin", "ddhs"), getAllAttendance);
+router.get(
+  "/today/:email",
+  authorizeRoles("doctor", "centre-admin", "ddhs"),
+  getTodayAttendance
+);
 
 module.exports = router;

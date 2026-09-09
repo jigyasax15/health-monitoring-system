@@ -10,12 +10,14 @@ function App() {
   const [role, setRole] = useState("doctor");
   const [loggedIn, setLoggedIn] = useState(false);
   const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
   // Stores the message received from our Express backend
   const [backendMessage, setBackendMessage] = useState("");
 
-  // Test connection between React frontend and Express backend
+  // Check existing session on load and test backend connection
   useEffect(() => {
+    // Test backend connection
     fetch("http://localhost:5000/api/test")
       .then((response) => response.json())
       .then((data) => {
@@ -24,6 +26,32 @@ function App() {
       .catch((error) => {
         console.error("Backend connection error:", error);
         setBackendMessage("Backend connection failed");
+      });
+
+    // Check if user has an active session via HTTP-only cookie
+    fetch("http://localhost:5000/api/auth/me", {
+      method: "GET",
+      credentials: "include",
+    })
+      .then((response) => {
+        if (response.ok) {
+          return response.json();
+        }
+        return null;
+      })
+      .then((data) => {
+        if (data && data.success && data.user) {
+          setUser(data.user);
+          setEmail(data.user.email);
+          setRole(data.user.role);
+          setLoggedIn(true);
+        }
+      })
+      .catch((error) => {
+        console.error("Session verification error:", error);
+      })
+      .finally(() => {
+        setAuthLoading(false);
       });
   }, []);
 
@@ -41,6 +69,7 @@ function App() {
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
         body: JSON.stringify({
           email,
           password,
@@ -66,12 +95,33 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
-    setLoggedIn(false);
-    setUser(null);
-    setEmail("");
-    setPassword("");
+  const handleLogout = async () => {
+    try {
+      await fetch("http://localhost:5000/api/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Logout request error:", error);
+    } finally {
+      setLoggedIn(false);
+      setUser(null);
+      setEmail("");
+      setPassword("");
+    }
   };
+
+  // Auth checking screen during initial session verification
+  if (authLoading) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <h1>Health Monitoring System</h1>
+          <p className="subtitle">Verifying session...</p>
+        </div>
+      </div>
+    );
+  }
 
   // Doctor Dashboard
   if (loggedIn && role === "doctor") {

@@ -27,8 +27,16 @@ function CentreAdminDashboard({ user, onLogout }) {
       const response = await fetch(
         `http://localhost:5000/api/phc-summary?centre=${encodeURIComponent(
           assignedCentre
-        )}`
+        )}`,
+        {
+          credentials: "include",
+        }
       );
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
 
       const data = await response.json();
 
@@ -52,8 +60,16 @@ function CentreAdminDashboard({ user, onLogout }) {
       const alertRes = await fetch(
         `http://localhost:5000/api/alerts/centre?centre=${encodeURIComponent(
           assignedCentre
-        )}`
+        )}`,
+        {
+          credentials: "include",
+        }
       );
+
+      if (alertRes.status === 401) {
+        onLogout();
+        return;
+      }
 
       const alertData = await alertRes.json();
 

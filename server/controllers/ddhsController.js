@@ -98,9 +98,10 @@ const getDdhsOverview = async (req, res) => {
       centres: centresData,
     });
   } catch (error) {
+    console.error("getDdhsOverview error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
@@ -108,4 +109,3 @@ const getDdhsOverview = async (req, res) => {
 module.exports = {
   getDdhsOverview,
 };
-

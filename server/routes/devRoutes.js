@@ -22,7 +22,7 @@ router.get("/add-test-doctor", async (req, res) => {
   try {
     const existingDoctor = await Doctor.findOne({
       email: "doctor@test.com",
-    });
+    }).select("-password");
 
     if (existingDoctor) {
       return res.json({
@@ -41,16 +41,19 @@ router.get("/add-test-doctor", async (req, res) => {
     });
 
     const savedDoctor = await doctor.save();
+    const doctorObj = savedDoctor.toObject();
+    delete doctorObj.password;
 
     res.status(201).json({
       success: true,
       message: "Test doctor added successfully",
-      doctor: savedDoctor,
+      doctor: doctorObj,
     });
   } catch (error) {
+    console.error("add-test-doctor error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 });
@@ -112,9 +115,10 @@ router.get("/add-test-doctors", async (req, res) => {
       doctors: addedDoctors,
     });
   } catch (error) {
+    console.error("add-test-doctors error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 });
@@ -163,9 +167,10 @@ router.get("/setup-test-passwords", async (req, res) => {
       updated,
     });
   } catch (error) {
+    console.error("setup-test-passwords error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 });
@@ -221,9 +226,10 @@ router.get("/setup-test-admins", async (req, res) => {
       created,
     });
   } catch (error) {
+    console.error("setup-test-admins error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 });
@@ -278,9 +284,10 @@ router.get("/setup-test-centres", async (req, res) => {
       created,
     });
   } catch (error) {
+    console.error("setup-test-centres error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 });

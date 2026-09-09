@@ -23,8 +23,16 @@ function DoctorDashboard({ email, onLogout }) {
         const doctorResponse = await fetch(
           `http://localhost:5000/api/doctors/email/${encodeURIComponent(
             email
-          )}`
+          )}`,
+          {
+            credentials: "include",
+          }
         );
+
+        if (doctorResponse.status === 401) {
+          onLogout();
+          return;
+        }
 
         const doctorData = await doctorResponse.json();
 
@@ -40,8 +48,16 @@ function DoctorDashboard({ email, onLogout }) {
         const attendanceResponse = await fetch(
           `http://localhost:5000/api/attendance/today/${encodeURIComponent(
             email
-          )}`
+          )}`,
+          {
+            credentials: "include",
+          }
         );
+
+        if (attendanceResponse.status === 401) {
+          onLogout();
+          return;
+        }
 
         const attendanceData =
           await attendanceResponse.json();
@@ -63,7 +79,7 @@ function DoctorDashboard({ email, onLogout }) {
     };
 
     loadDashboard();
-  }, [email]);
+  }, [email, onLogout]);
 
   // Mark attendance
   const handleAttendance = async () => {
@@ -79,11 +95,10 @@ function DoctorDashboard({ email, onLogout }) {
         "http://localhost:5000/api/attendance",
         {
           method: "POST",
-
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
-
           body: JSON.stringify({
             doctorEmail: doctor.email,
             doctorName: doctor.name,
@@ -91,6 +106,11 @@ function DoctorDashboard({ email, onLogout }) {
           }),
         }
       );
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
 
       const data = await response.json();
 

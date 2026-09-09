@@ -4,11 +4,21 @@ const {
   getDdhsAlerts,
   resolveAlertController,
 } = require("../controllers/alertController");
+const {
+  authenticate,
+  authorizeRoles,
+} = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-router.get("/centre", getCentreAlerts);
-router.get("/ddhs", getDdhsAlerts);
-router.post("/:id/resolve", resolveAlertController);
+router.use(authenticate);
+
+router.get("/centre", authorizeRoles("centre-admin", "ddhs"), getCentreAlerts);
+router.get("/ddhs", authorizeRoles("ddhs"), getDdhsAlerts);
+router.post(
+  "/:id/resolve",
+  authorizeRoles("centre-admin", "ddhs"),
+  resolveAlertController
+);
 
 module.exports = router;

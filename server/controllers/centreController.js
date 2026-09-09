@@ -7,16 +7,35 @@ const { determineAttendanceStatus } = require("../utils/attendanceStatus");
 // Get daily attendance summary for a specific health centre
 const getPhcSummary = async (req, res) => {
   try {
-    const { centre } = req.query;
+    let targetCentre = req.query.centre;
 
-    if (!centre || !centre.trim()) {
+    // Enforce centre data isolation for centre-admin
+    if (req.user.role === "centre-admin") {
+      if (!req.user.healthCentre) {
+        return res.status(403).json({
+          success: false,
+          message: "No health centre assigned to this administrator account",
+        });
+      }
+
+      if (targetCentre && targetCentre.trim() !== req.user.healthCentre) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied: you can only access your assigned health centre",
+        });
+      }
+
+      targetCentre = req.user.healthCentre;
+    }
+
+    if (!targetCentre || !targetCentre.trim()) {
       return res.status(400).json({
         success: false,
         message: "Health centre parameter is required",
       });
     }
 
-    const centreName = centre.trim();
+    const centreName = targetCentre.trim();
 
     // Verify centre exists in database
     const healthCentreDoc = await HealthCentre.findOne({
@@ -83,9 +102,10 @@ const getPhcSummary = async (req, res) => {
       doctors: doctorData,
     });
   } catch (error) {
+    console.error("getPhcSummary error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
@@ -93,4 +113,3 @@ const getPhcSummary = async (req, res) => {
 module.exports = {
   getPhcSummary,
 };
-

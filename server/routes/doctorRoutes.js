@@ -5,9 +5,20 @@ const {
   getAllDoctors,
   getDoctorByEmail,
 } = require("../controllers/doctorController");
+const {
+  authenticate,
+  authorizeRoles,
+} = require("../middleware/authMiddleware");
 
-router.post("/", createDoctor);
-router.get("/", getAllDoctors);
-router.get("/email/:email", getDoctorByEmail);
+// All doctor endpoints require authentication
+router.use(authenticate);
+
+router.post("/", authorizeRoles("centre-admin", "ddhs"), createDoctor);
+router.get("/", authorizeRoles("centre-admin", "ddhs"), getAllDoctors);
+router.get(
+  "/email/:email",
+  authorizeRoles("doctor", "centre-admin", "ddhs"),
+  getDoctorByEmail
+);
 
 module.exports = router;

@@ -5,10 +5,23 @@ const createDoctor = async (req, res) => {
   try {
     const { name, email, department, healthCentre } = req.body;
 
-    if (!name || !email || !department || !healthCentre) {
+    if (!name || !email || !department) {
       return res.status(400).json({
         success: false,
-        message: "All doctor fields are required",
+        message: "Doctor name, email, and department are required",
+      });
+    }
+
+    // Centre admin can only create doctor for their assigned health centre
+    let targetCentre = healthCentre;
+    if (req.user.role === "centre-admin") {
+      targetCentre = req.user.healthCentre;
+    }
+
+    if (!targetCentre) {
+      return res.status(400).json({
+        success: false,
+        message: "Health centre is required",
       });
     }
 
@@ -26,10 +39,10 @@ const createDoctor = async (req, res) => {
     }
 
     const doctor = new Doctor({
-      name,
+      name: name.trim(),
       email: normalizedEmail,
-      department,
-      healthCentre,
+      department: department.trim(),
+      healthCentre: targetCentre.trim(),
     });
 
     const savedDoctor = await doctor.save();
@@ -42,17 +55,24 @@ const createDoctor = async (req, res) => {
       doctor: doctorObj,
     });
   } catch (error) {
+    console.error("createDoctor error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
 
-// Get all doctors
+// Get all doctors (filtered by health centre for centre admins)
 const getAllDoctors = async (req, res) => {
   try {
-    const doctors = await Doctor.find()
+    let filter = {};
+
+    if (req.user.role === "centre-admin") {
+      filter.healthCentre = req.user.healthCentre;
+    }
+
+    const doctors = await Doctor.find(filter)
       .select("-password")
       .sort({
         name: 1,
@@ -65,9 +85,10 @@ const getAllDoctors = async (req, res) => {
       doctors,
     });
   } catch (error) {
+    console.error("getAllDoctors error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
@@ -76,6 +97,14 @@ const getAllDoctors = async (req, res) => {
 const getDoctorByEmail = async (req, res) => {
   try {
     const email = req.params.email.toLowerCase().trim();
+
+    // Enforce role authorization
+    if (req.user.role === "doctor" && req.user.email !== email) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: cannot access another doctor's profile",
+      });
+    }
 
     const doctor = await Doctor.findOne({
       email,
@@ -90,14 +119,25 @@ const getDoctorByEmail = async (req, res) => {
       });
     }
 
+    if (
+      req.user.role === "centre-admin" &&
+      req.user.healthCentre !== doctor.healthCentre
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: doctor belongs to a different health centre",
+      });
+    }
+
     res.json({
       success: true,
       doctor,
     });
   } catch (error) {
+    console.error("getDoctorByEmail error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };

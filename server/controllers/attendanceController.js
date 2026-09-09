@@ -3,35 +3,27 @@ const Doctor = require("../models/Doctor");
 const { getTodayDateString } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
 
-// Mark daily attendance for a doctor
+// Mark daily attendance for the authenticated doctor
 const markAttendance = async (req, res) => {
   try {
-    const { doctorEmail, doctorName, healthCentre } = req.body;
-
-    if (!doctorEmail || !doctorName || !healthCentre) {
-      return res.status(400).json({
-        success: false,
-        message: "Doctor attendance information is incomplete",
-      });
-    }
-
-    const normalizedEmail = doctorEmail.toLowerCase().trim();
+    // Rely strictly on verified user from JWT token
+    const doctorEmail = req.user.email.toLowerCase().trim();
 
     const doctor = await Doctor.findOne({
-      email: normalizedEmail,
+      email: doctorEmail,
     });
 
     if (!doctor) {
       return res.status(404).json({
         success: false,
-        message: "Doctor not found",
+        message: "Doctor profile not found",
       });
     }
 
     const today = getTodayDateString();
 
     const existingAttendance = await Attendance.findOne({
-      doctorEmail: normalizedEmail,
+      doctorEmail,
       date: today,
     });
 
@@ -43,7 +35,7 @@ const markAttendance = async (req, res) => {
     }
 
     const attendance = new Attendance({
-      doctorEmail: normalizedEmail,
+      doctorEmail,
       doctorName: doctor.name,
       healthCentre: doctor.healthCentre,
       status: "Present",
@@ -65,17 +57,24 @@ const markAttendance = async (req, res) => {
       });
     }
 
+    console.error("markAttendance error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
 
-// Get all attendance records
+// Get all attendance records (isolated for centre admins)
 const getAllAttendance = async (req, res) => {
   try {
-    const records = await Attendance.find().sort({
+    let filter = {};
+
+    if (req.user.role === "centre-admin") {
+      filter.healthCentre = req.user.healthCentre;
+    }
+
+    const records = await Attendance.find(filter).sort({
       createdAt: -1,
     });
 
@@ -85,9 +84,10 @@ const getAllAttendance = async (req, res) => {
       attendance: records,
     });
   } catch (error) {
+    console.error("getAllAttendance error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
@@ -96,6 +96,24 @@ const getAllAttendance = async (req, res) => {
 const getTodayAttendance = async (req, res) => {
   try {
     const email = (req.params.email || "").toLowerCase().trim();
+
+    // Enforce role authorization
+    if (req.user.role === "doctor" && req.user.email !== email) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: cannot access another doctor's attendance",
+      });
+    }
+
+    if (req.user.role === "centre-admin") {
+      const doctor = await Doctor.findOne({ email }).lean();
+      if (!doctor || doctor.healthCentre !== req.user.healthCentre) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied: doctor belongs to a different health centre",
+        });
+      }
+    }
 
     const today = getTodayDateString();
 
@@ -123,9 +141,10 @@ const getTodayAttendance = async (req, res) => {
       attendance,
     });
   } catch (error) {
+    console.error("getTodayAttendance error:", error);
     res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Internal server error",
     });
   }
 };
@@ -135,4 +154,3 @@ module.exports = {
   getAllAttendance,
   getTodayAttendance,
 };
-

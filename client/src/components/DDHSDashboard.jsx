@@ -15,7 +15,15 @@ function DDHSDashboard({ user, onLogout }) {
       setLoading(true);
       setError("");
 
-      const response = await fetch("http://localhost:5000/api/ddhs/overview");
+      const response = await fetch("http://localhost:5000/api/ddhs/overview", {
+        credentials: "include",
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
       const result = await response.json();
 
       if (!response.ok) {
@@ -35,7 +43,15 @@ function DDHSDashboard({ user, onLogout }) {
       setAlertsLoading(true);
       setAlertsError("");
 
-      const alertRes = await fetch("http://localhost:5000/api/ddhs/alerts");
+      const alertRes = await fetch("http://localhost:5000/api/ddhs/alerts", {
+        credentials: "include",
+      });
+
+      if (alertRes.status === 401) {
+        onLogout();
+        return;
+      }
+
       const alertResult = await alertRes.json();
 
       if (!alertRes.ok) {
