@@ -2,6 +2,10 @@ const Attendance = require("../models/Attendance");
 const Doctor = require("../models/Doctor");
 const { getTodayDateString } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
+const {
+  getAttendanceHistoryData,
+  getDoctorAttendanceSummary,
+} = require("../services/reportService");
 
 // Mark daily attendance for the authenticated doctor
 const markAttendance = async (req, res) => {
@@ -149,8 +153,84 @@ const getTodayAttendance = async (req, res) => {
   }
 };
 
+// GET /api/attendance/history
+const getAttendanceHistory = async (req, res) => {
+  try {
+    const {
+      startDate,
+      endDate,
+      status,
+      doctorEmail,
+      department,
+      healthCentre,
+      page,
+      limit,
+    } = req.query;
+
+    const result = await getAttendanceHistoryData({
+      userRole: req.user.role,
+      userEmail: req.user.email,
+      userHealthCentre: req.user.healthCentre,
+      startDate,
+      endDate,
+      status,
+      doctorEmail,
+      department,
+      healthCentre,
+      page,
+      limit,
+    });
+
+    if (result.error) {
+      return res.status(result.statusCode || 400).json({
+        success: false,
+        message: result.error,
+      });
+    }
+
+    return res.json(result);
+  } catch (error) {
+    console.error("getAttendanceHistory error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+// GET /api/attendance/my-summary
+const getMyAttendanceSummary = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const doctorEmail = req.user.email;
+
+    const result = await getDoctorAttendanceSummary(
+      doctorEmail,
+      startDate,
+      endDate
+    );
+
+    if (result.error) {
+      return res.status(result.statusCode || 400).json({
+        success: false,
+        message: result.error,
+      });
+    }
+
+    return res.json(result);
+  } catch (error) {
+    console.error("getMyAttendanceSummary error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 module.exports = {
   markAttendance,
   getAllAttendance,
   getTodayAttendance,
+  getAttendanceHistory,
+  getMyAttendanceSummary,
 };
