@@ -7,6 +7,7 @@ const {
   getPreviousDateString,
 } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
+const { getApplicableHolidays } = require("../utils/workingDays");
 
 const SEVERITY_WEIGHT = {
   critical: 3,
@@ -17,14 +18,25 @@ const SEVERITY_WEIGHT = {
 /**
  * Calculates consecutive absence streak for a doctor ending on today's date.
  *
+ * Rules:
+ * - If today is not Absent (e.g. Present, Not Marked before cutoff, or Non-Working Day), return 0.
+ * - If today is Absent, start streak with 1 missed working day.
+ * - When scanning backwards:
+ *   * Non-working day (weekend or holiday) -> skip and continue streak without incrementing missed working days.
+ *   * Working day + Absent -> increment streak (consecutiveDays++).
+ *   * Working day + Present -> break streak.
+ *   * Working day + Not Marked -> break streak.
+ *
  * @param {Object} doctor
  * @param {Array} attendanceRecords - Attendance records for this doctor
  * @param {Object} [options={}]
- * @returns {number} Number of consecutive absent days
+ * @param {Array<Object>} [options.holidayList=[]]
+ * @returns {number} Number of consecutive missed working days
  */
 function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
   const referenceDate = options.referenceDate || new Date();
   const todayStr = getTodayDateString(referenceDate);
+  const holidayList = options.holidayList || [];
 
   // Check today's status first
   const todayRecord = attendanceRecords.find(
@@ -33,8 +45,11 @@ function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
   const todayStatus = determineAttendanceStatus(todayRecord, {
     targetDate: todayStr,
     referenceDate,
+    healthCentre: doctor.healthCentre,
+    holidayList,
   });
 
+  // If today is not Absent (Present, Not Marked before cutoff, or Non-Working Day), no active streak ending today
   if (todayStatus !== "Absent") {
     return 0;
   }
@@ -50,11 +65,18 @@ function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
     const pastStatus = determineAttendanceStatus(pastRecord, {
       targetDate: pastDateStr,
       referenceDate,
+      healthCentre: doctor.healthCentre,
+      holidayList,
     });
 
-    if (pastStatus === "Absent") {
+    if (pastStatus === "Non-Working Day") {
+      // Non-working day (weekend/holiday): skip and continue without incrementing count
+      continue;
+    } else if (pastStatus === "Absent") {
+      // Missed working day
       consecutiveDays++;
     } else {
+      // Present or Not Marked on a working day breaks the consecutive absence streak
       break;
     }
   }
@@ -73,6 +95,7 @@ function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
 async function generateAndGetActiveAlerts(filter = {}, options = {}) {
   const referenceDate = options.referenceDate || new Date();
   const todayStr = getTodayDateString(referenceDate);
+  const startDate = getPreviousDateString(30, referenceDate);
 
   // 1. Find target active health centres
   const centreQuery = { isActive: { $ne: false } };
@@ -92,10 +115,14 @@ async function generateAndGetActiveAlerts(filter = {}, options = {}) {
 
   const doctorEmails = doctors.map((d) => d.email);
 
-  // 3. Find attendance records for these doctors
-  const attendanceRecords = await Attendance.find({
-    doctorEmail: { $in: doctorEmails },
-  });
+  // 3. Batch query attendance records and applicable holidays in the 30-day window
+  const [attendanceRecords, holidayList] = await Promise.all([
+    Attendance.find({
+      doctorEmail: { $in: doctorEmails },
+      date: { $gte: startDate, $lte: todayStr },
+    }),
+    getApplicableHolidays(startDate, todayStr, filter.centreName || null),
+  ]);
 
   // 4. Evaluate each doctor
   for (const doctor of doctors) {
@@ -106,8 +133,9 @@ async function generateAndGetActiveAlerts(filter = {}, options = {}) {
     const consecutiveDays = calculateConsecutiveAbsences(
       doctor,
       docRecords,
-      options
+      { ...options, holidayList }
     );
+
 
     if (consecutiveDays > 0) {
       let alertType;

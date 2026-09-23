@@ -3,6 +3,7 @@ const Attendance = require("../models/Attendance");
 const HealthCentre = require("../models/HealthCentre");
 const { getTodayDateString } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
+const { getApplicableHolidays } = require("../utils/workingDays");
 
 // Get daily attendance summary for a specific health centre
 const getPhcSummary = async (req, res) => {
@@ -51,14 +52,14 @@ const getPhcSummary = async (req, res) => {
 
     const today = getTodayDateString();
 
-    const doctors = await Doctor.find({
-      healthCentre: healthCentreDoc.name,
-    });
-
-    const attendanceRecords = await Attendance.find({
-      healthCentre: healthCentreDoc.name,
-      date: today,
-    });
+    const [doctors, attendanceRecords, holidayList] = await Promise.all([
+      Doctor.find({ healthCentre: healthCentreDoc.name }),
+      Attendance.find({
+        healthCentre: healthCentreDoc.name,
+        date: today,
+      }),
+      getApplicableHolidays(today, today, healthCentreDoc.name),
+    ]);
 
     const doctorData = doctors.map((doctor) => {
       const attendance = attendanceRecords.find(
@@ -67,6 +68,8 @@ const getPhcSummary = async (req, res) => {
 
       const status = determineAttendanceStatus(attendance, {
         targetDate: today,
+        healthCentre: doctor.healthCentre,
+        holidayList,
       });
 
       return {
@@ -91,6 +94,10 @@ const getPhcSummary = async (req, res) => {
       (doctor) => doctor.status === "Not Marked"
     ).length;
 
+    const nonWorking = doctorData.filter(
+      (doctor) => doctor.status === "Non-Working Day"
+    ).length;
+
     res.json({
       success: true,
       healthCentre: healthCentreDoc.name,
@@ -99,6 +106,7 @@ const getPhcSummary = async (req, res) => {
       present,
       absent,
       notMarked,
+      nonWorking,
       doctors: doctorData,
     });
   } catch (error) {

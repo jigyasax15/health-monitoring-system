@@ -109,25 +109,39 @@ const getTodayAttendance = async (req, res) => {
       });
     }
 
-    if (req.user.role === "centre-admin") {
-      const doctor = await Doctor.findOne({ email }).lean();
-      if (!doctor || doctor.healthCentre !== req.user.healthCentre) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied: doctor belongs to a different health centre",
-        });
-      }
-    }
-
     const today = getTodayDateString();
 
-    const attendance = await Attendance.findOne({
-      doctorEmail: email,
-      date: today,
-    });
+    const doctor = await Doctor.findOne({ email }).lean();
+    if (!doctor) {
+      return res.status(404).json({
+        success: false,
+        message: "Doctor not found",
+      });
+    }
+
+    if (
+      req.user.role === "centre-admin" &&
+      doctor.healthCentre !== req.user.healthCentre
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: doctor belongs to a different health centre",
+      });
+    }
+
+    const { getApplicableHolidays } = require("../utils/workingDays");
+    const [attendance, holidayList] = await Promise.all([
+      Attendance.findOne({
+        doctorEmail: email,
+        date: today,
+      }),
+      getApplicableHolidays(today, today, doctor.healthCentre),
+    ]);
 
     const derivedStatus = determineAttendanceStatus(attendance, {
       targetDate: today,
+      healthCentre: doctor.healthCentre,
+      holidayList,
     });
 
     if (!attendance) {

@@ -11,6 +11,7 @@ const centreRoutes = require("./routes/centreRoutes");
 const ddhsRoutes = require("./routes/ddhsRoutes");
 const alertRoutes = require("./routes/alertRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+const holidayRoutes = require("./routes/holidayRoutes");
 const devRoutes = require("./routes/devRoutes");
 
 const app = express();
@@ -53,6 +54,7 @@ app.use("/api", centreRoutes);
 app.use("/api/ddhs", ddhsRoutes);
 app.use("/api/alerts", alertRoutes);
 app.use("/api/reports", reportRoutes);
+app.use("/api/holidays", holidayRoutes);
 app.use("/api", devRoutes);
 
 // --------------------

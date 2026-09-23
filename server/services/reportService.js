@@ -3,6 +3,7 @@ const Attendance = require("../models/Attendance");
 const HealthCentre = require("../models/HealthCentre");
 const { getTodayDateString, getPreviousDateString } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
+const { getApplicableHolidays, isWorkingDay } = require("../utils/workingDays");
 
 /**
  * Generates an array of YYYY-MM-DD date strings between startDate and endDate (inclusive).
@@ -75,17 +76,26 @@ function resolveDateRange(start, end) {
  * Calculates attendance metrics for a doctor over a list of dates.
  * Uses batch Attendance records and determineAttendanceStatus.
  *
+ * Attendance percentage denominator policy:
+ * - Only scheduled working days count towards eligibleDays / denominator.
+ * - Non-working days (weekends, holidays) and future dates are excluded from denominator.
+ * - Real Present marks on non-working days are preserved in records and presentDays, but do not alter normal eligibleDays.
+ *
  * @param {Object} doctor - Doctor document / object
  * @param {string[]} dateList - List of YYYY-MM-DD strings
  * @param {Map<string, Object>} attendanceMap - Map keyed by `${doctorEmail}_${date}`
  * @param {string} todayStr - Today's date string in IST
+ * @param {Array<Object>} [holidayList=[]] - Pre-fetched applicable holidays
  * @returns {Object}
  */
-function calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todayStr) {
+function calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todayStr, holidayList = [], options = {}) {
   let presentDays = 0;
+  let presentWorkingDays = 0;
+  let presentNonWorkingDays = 0;
   let absentDays = 0;
   let notMarkedDays = 0;
-  let eligibleDays = 0;
+  let nonWorkingDays = 0;
+  let eligibleWorkingDays = 0;
 
   const records = [];
 
@@ -93,18 +103,37 @@ function calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todaySt
     const key = `${doctor.email}_${date}`;
     const attendanceDoc = attendanceMap.get(key) || null;
 
-    const derivedStatus = determineAttendanceStatus(attendanceDoc, { targetDate: date });
+    const working = isWorkingDay(date, {
+      healthCentre: doctor.healthCentre,
+      holidayList,
+    });
+
+    const derivedStatus = determineAttendanceStatus(attendanceDoc, {
+      targetDate: date,
+      referenceDate: options.referenceDate,
+      healthCentre: doctor.healthCentre,
+      holidayList,
+    });
 
     if (derivedStatus === "Present") {
       presentDays++;
-      eligibleDays++;
+      if (working) {
+        presentWorkingDays++;
+        eligibleWorkingDays++;
+      } else {
+        presentNonWorkingDays++;
+      }
     } else if (derivedStatus === "Absent") {
       absentDays++;
-      eligibleDays++;
+      if (working) {
+        eligibleWorkingDays++;
+      }
+    } else if (derivedStatus === "Non-Working Day") {
+      nonWorkingDays++;
+      // Excluded from percentage denominator
     } else {
       notMarkedDays++;
-      // If date is in past or today past cutoff, it was counted as Absent above.
-      // If date is today before cutoff or future, it is Not Marked (excluded from percentage denominator).
+      // Excluded from percentage denominator (e.g. future working day or today before cutoff)
     }
 
     records.push({
@@ -115,14 +144,15 @@ function calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todaySt
       healthCentre: doctor.healthCentre,
       date,
       status: derivedStatus,
+      isWorkingDay: working,
       markedAt: attendanceDoc ? attendanceDoc.markedAt || attendanceDoc.createdAt : null,
       isRecorded: !!attendanceDoc,
     });
   }
 
   const attendancePercentage =
-    eligibleDays > 0
-      ? Math.round((presentDays / eligibleDays) * 100 * 10) / 10
+    eligibleWorkingDays > 0
+      ? Math.round((presentWorkingDays / eligibleWorkingDays) * 100 * 10) / 10
       : 0;
 
   return {
@@ -134,10 +164,14 @@ function calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todaySt
       healthCentre: doctor.healthCentre,
     },
     totalDays: dateList.length,
-    eligibleDays,
+    eligibleDays: eligibleWorkingDays,
+    eligibleWorkingDays,
     presentDays,
+    presentWorkingDays,
+    presentNonWorkingDays,
     absentDays,
     notMarkedDays,
+    nonWorkingDays,
     attendancePercentage,
     records,
   };
@@ -157,11 +191,14 @@ async function getDoctorAttendanceSummary(doctorEmail, start, end) {
     return { error: "Doctor profile not found", statusCode: 404 };
   }
 
-  // Batch query attendance documents
-  const attendanceDocs = await Attendance.find({
-    doctorEmail: doctor.email,
-    date: { $gte: startDate, $lte: endDate },
-  }).lean();
+  // Batch query attendance documents and applicable holidays
+  const [attendanceDocs, holidayList] = await Promise.all([
+    Attendance.find({
+      doctorEmail: doctor.email,
+      date: { $gte: startDate, $lte: endDate },
+    }).lean(),
+    getApplicableHolidays(startDate, endDate, doctor.healthCentre),
+  ]);
 
   const attendanceMap = new Map();
   for (const doc of attendanceDocs) {
@@ -169,7 +206,13 @@ async function getDoctorAttendanceSummary(doctorEmail, start, end) {
   }
 
   const todayStr = getTodayDateString();
-  const metrics = calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todayStr);
+  const metrics = calculateDoctorMetricsForDates(
+    doctor,
+    dateList,
+    attendanceMap,
+    todayStr,
+    holidayList
+  );
 
   return {
     success: true,
@@ -177,10 +220,14 @@ async function getDoctorAttendanceSummary(doctorEmail, start, end) {
     endDate,
     doctor: metrics.doctor,
     totalDays: metrics.totalDays,
-    eligibleDays: metrics.eligibleDays,
+    eligibleDays: metrics.eligibleWorkingDays,
+    eligibleWorkingDays: metrics.eligibleWorkingDays,
     presentDays: metrics.presentDays,
+    presentWorkingDays: metrics.presentWorkingDays,
+    presentNonWorkingDays: metrics.presentNonWorkingDays,
     absentDays: metrics.absentDays,
     notMarkedDays: metrics.notMarkedDays,
+    nonWorkingDays: metrics.nonWorkingDays,
     attendancePercentage: metrics.attendancePercentage,
   };
 }
@@ -215,7 +262,7 @@ async function getAttendanceHistoryData(filterOptions) {
   }
 
   // 2. Status Validation
-  const validStatuses = ["Present", "Absent", "Not Marked"];
+  const validStatuses = ["Present", "Absent", "Not Marked", "Non-Working Day"];
   if (reqStatus && !validStatuses.includes(reqStatus)) {
     return { error: `Invalid status parameter. Must be one of: ${validStatuses.join(", ")}`, statusCode: 400 };
   }
@@ -230,10 +277,8 @@ async function getAttendanceHistoryData(filterOptions) {
   const doctorQuery = {};
 
   if (userRole === "doctor") {
-    // Doctor can only access their own history
     doctorQuery.email = userEmail.toLowerCase().trim();
   } else if (userRole === "centre-admin") {
-    // Centre admin can only access doctors in their assigned centre
     if (!userHealthCentre) {
       return { error: "No health centre assigned to this administrator account", statusCode: 403 };
     }
@@ -246,7 +291,6 @@ async function getAttendanceHistoryData(filterOptions) {
       doctorQuery.department = reqDepartment.trim();
     }
   } else if (userRole === "ddhs") {
-    // DDHS can access all or filter by centre, department, doctorEmail
     if (reqHealthCentre && reqHealthCentre.trim()) {
       const centreExists = await HealthCentre.findOne({
         name: reqHealthCentre.trim(),
@@ -284,18 +328,26 @@ async function getAttendanceHistoryData(filterOptions) {
 
   const doctorEmails = doctors.map((d) => d.email);
 
-  // 5. Batch Query Attendance Documents
-  const attendanceDocs = await Attendance.find({
-    doctorEmail: { $in: doctorEmails },
-    date: { $gte: startDate, $lte: endDate },
-  }).lean();
+  // 5. Batch Query Attendance Documents and Applicable Holidays
+  const targetScopeCentre =
+    userRole === "centre-admin"
+      ? userHealthCentre
+      : reqHealthCentre && reqHealthCentre.trim()
+      ? reqHealthCentre.trim()
+      : null;
+
+  const [attendanceDocs, holidayList] = await Promise.all([
+    Attendance.find({
+      doctorEmail: { $in: doctorEmails },
+      date: { $gte: startDate, $lte: endDate },
+    }).lean(),
+    getApplicableHolidays(startDate, endDate, targetScopeCentre),
+  ]);
 
   const attendanceMap = new Map();
   for (const doc of attendanceDocs) {
     attendanceMap.set(`${doc.doctorEmail}_${doc.date}`, doc);
   }
-
-  const todayStr = getTodayDateString();
 
   // 6. Generate All Derived History Records
   let allRecords = [];
@@ -307,7 +359,11 @@ async function getAttendanceHistoryData(filterOptions) {
     for (const doctor of doctors) {
       const key = `${doctor.email}_${date}`;
       const doc = attendanceMap.get(key) || null;
-      const derivedStatus = determineAttendanceStatus(doc, { targetDate: date });
+      const derivedStatus = determineAttendanceStatus(doc, {
+        targetDate: date,
+        healthCentre: doctor.healthCentre,
+        holidayList,
+      });
 
       if (reqStatus && derivedStatus !== reqStatus) {
         continue;
@@ -365,10 +421,14 @@ async function getCentreAttendanceReport(centreName, start, end) {
   const doctors = await Doctor.find({ healthCentre: centreDoc.name }).lean();
   const doctorEmails = doctors.map((d) => d.email);
 
-  const attendanceDocs = await Attendance.find({
-    doctorEmail: { $in: doctorEmails },
-    date: { $gte: startDate, $lte: endDate },
-  }).lean();
+  // Batch query attendance docs and holidays for this health centre
+  const [attendanceDocs, holidayList] = await Promise.all([
+    Attendance.find({
+      doctorEmail: { $in: doctorEmails },
+      date: { $gte: startDate, $lte: endDate },
+    }).lean(),
+    getApplicableHolidays(startDate, endDate, centreDoc.name),
+  ]);
 
   const attendanceMap = new Map();
   for (const doc of attendanceDocs) {
@@ -378,20 +438,30 @@ async function getCentreAttendanceReport(centreName, start, end) {
   const todayStr = getTodayDateString();
 
   let totalPresent = 0;
+  let totalPresentWorking = 0;
   let totalAbsent = 0;
   let totalNotMarked = 0;
-  let totalEligible = 0;
+  let totalNonWorking = 0;
+  let totalEligibleWorking = 0;
 
   const doctorSummaries = [];
   const departmentMap = new Map();
 
   for (const doctor of doctors) {
-    const metrics = calculateDoctorMetricsForDates(doctor, dateList, attendanceMap, todayStr);
+    const metrics = calculateDoctorMetricsForDates(
+      doctor,
+      dateList,
+      attendanceMap,
+      todayStr,
+      holidayList
+    );
 
     totalPresent += metrics.presentDays;
+    totalPresentWorking += metrics.presentWorkingDays;
     totalAbsent += metrics.absentDays;
     totalNotMarked += metrics.notMarkedDays;
-    totalEligible += metrics.eligibleDays;
+    totalNonWorking += metrics.nonWorkingDays;
+    totalEligibleWorking += metrics.eligibleWorkingDays;
 
     doctorSummaries.push({
       id: doctor._id,
@@ -400,9 +470,13 @@ async function getCentreAttendanceReport(centreName, start, end) {
       department: doctor.department,
       healthCentre: doctor.healthCentre,
       presentDays: metrics.presentDays,
+      presentWorkingDays: metrics.presentWorkingDays,
+      presentNonWorkingDays: metrics.presentNonWorkingDays,
       absentDays: metrics.absentDays,
       notMarkedDays: metrics.notMarkedDays,
-      eligibleDays: metrics.eligibleDays,
+      nonWorkingDays: metrics.nonWorkingDays,
+      eligibleDays: metrics.eligibleWorkingDays,
+      eligibleWorkingDays: metrics.eligibleWorkingDays,
       attendancePercentage: metrics.attendancePercentage,
     });
 
@@ -413,8 +487,10 @@ async function getCentreAttendanceReport(centreName, start, end) {
         department: dept,
         totalDoctors: 0,
         presentDays: 0,
+        presentWorkingDays: 0,
         absentDays: 0,
         notMarkedDays: 0,
+        nonWorkingDays: 0,
         eligibleDays: 0,
       });
     }
@@ -422,23 +498,25 @@ async function getCentreAttendanceReport(centreName, start, end) {
     const deptStats = departmentMap.get(dept);
     deptStats.totalDoctors += 1;
     deptStats.presentDays += metrics.presentDays;
+    deptStats.presentWorkingDays += metrics.presentWorkingDays;
     deptStats.absentDays += metrics.absentDays;
     deptStats.notMarkedDays += metrics.notMarkedDays;
-    deptStats.eligibleDays += metrics.eligibleDays;
+    deptStats.nonWorkingDays += metrics.nonWorkingDays;
+    deptStats.eligibleDays += metrics.eligibleWorkingDays;
   }
 
-  // Calculate department percentages
+  // Calculate department percentages based on scheduled working days
   const departmentSummaries = Array.from(departmentMap.values()).map((dept) => ({
     ...dept,
     attendancePercentage:
       dept.eligibleDays > 0
-        ? Math.round((dept.presentDays / dept.eligibleDays) * 100 * 10) / 10
+        ? Math.round((dept.presentWorkingDays / dept.eligibleDays) * 100 * 10) / 10
         : 0,
   }));
 
   const overallAttendancePercentage =
-    totalEligible > 0
-      ? Math.round((totalPresent / totalEligible) * 100 * 10) / 10
+    totalEligibleWorking > 0
+      ? Math.round((totalPresentWorking / totalEligibleWorking) * 100 * 10) / 10
       : 0;
 
   return {
@@ -449,9 +527,12 @@ async function getCentreAttendanceReport(centreName, start, end) {
     totalDays: dateList.length,
     totalDoctors: doctors.length,
     present: totalPresent,
+    presentWorking: totalPresentWorking,
     absent: totalAbsent,
     notMarked: totalNotMarked,
-    eligibleDays: totalEligible,
+    nonWorking: totalNonWorking,
+    eligibleDays: totalEligibleWorking,
+    eligibleWorkingDays: totalEligibleWorking,
     attendancePercentage: overallAttendancePercentage,
     doctorSummary: doctorSummaries,
     departmentSummary: departmentSummaries,
@@ -485,10 +566,14 @@ async function getDdhsDistrictReport(start, end, options = {}) {
   const doctors = await Doctor.find({ healthCentre: { $in: centreNames } }).lean();
   const doctorEmails = doctors.map((d) => d.email);
 
-  const attendanceDocs = await Attendance.find({
-    doctorEmail: { $in: doctorEmails },
-    date: { $gte: startDate, $lte: endDate },
-  }).lean();
+  // Batch query attendance records and all active holidays for the range
+  const [attendanceDocs, holidayList] = await Promise.all([
+    Attendance.find({
+      doctorEmail: { $in: doctorEmails },
+      date: { $gte: startDate, $lte: endDate },
+    }).lean(),
+    getApplicableHolidays(startDate, endDate, options.centreName || null),
+  ]);
 
   const attendanceMap = new Map();
   for (const doc of attendanceDocs) {
@@ -498,9 +583,11 @@ async function getDdhsDistrictReport(start, end, options = {}) {
   const todayStr = getTodayDateString();
 
   let districtPresent = 0;
+  let districtPresentWorking = 0;
   let districtAbsent = 0;
   let districtNotMarked = 0;
-  let districtEligible = 0;
+  let districtNonWorking = 0;
+  let districtEligibleWorking = 0;
 
   const doctorRankings = [];
   const centreComparisons = [];
@@ -508,17 +595,27 @@ async function getDdhsDistrictReport(start, end, options = {}) {
   for (const centre of centres) {
     const centreDoctors = doctors.filter((d) => d.healthCentre === centre.name);
     let centrePresent = 0;
+    let centrePresentWorking = 0;
     let centreAbsent = 0;
     let centreNotMarked = 0;
-    let centreEligible = 0;
+    let centreNonWorking = 0;
+    let centreEligibleWorking = 0;
 
     for (const doc of centreDoctors) {
-      const metrics = calculateDoctorMetricsForDates(doc, dateList, attendanceMap, todayStr);
+      const metrics = calculateDoctorMetricsForDates(
+        doc,
+        dateList,
+        attendanceMap,
+        todayStr,
+        holidayList
+      );
 
       centrePresent += metrics.presentDays;
+      centrePresentWorking += metrics.presentWorkingDays;
       centreAbsent += metrics.absentDays;
       centreNotMarked += metrics.notMarkedDays;
-      centreEligible += metrics.eligibleDays;
+      centreNonWorking += metrics.nonWorkingDays;
+      centreEligibleWorking += metrics.eligibleWorkingDays;
 
       doctorRankings.push({
         id: doc._id,
@@ -527,21 +624,26 @@ async function getDdhsDistrictReport(start, end, options = {}) {
         department: doc.department,
         healthCentre: doc.healthCentre,
         presentDays: metrics.presentDays,
+        presentWorkingDays: metrics.presentWorkingDays,
         absentDays: metrics.absentDays,
         notMarkedDays: metrics.notMarkedDays,
-        eligibleDays: metrics.eligibleDays,
+        nonWorkingDays: metrics.nonWorkingDays,
+        eligibleDays: metrics.eligibleWorkingDays,
+        eligibleWorkingDays: metrics.eligibleWorkingDays,
         attendancePercentage: metrics.attendancePercentage,
       });
     }
 
     districtPresent += centrePresent;
+    districtPresentWorking += centrePresentWorking;
     districtAbsent += centreAbsent;
     districtNotMarked += centreNotMarked;
-    districtEligible += centreEligible;
+    districtNonWorking += centreNonWorking;
+    districtEligibleWorking += centreEligibleWorking;
 
     const centrePct =
-      centreEligible > 0
-        ? Math.round((centrePresent / centreEligible) * 100 * 10) / 10
+      centreEligibleWorking > 0
+        ? Math.round((centrePresentWorking / centreEligibleWorking) * 100 * 10) / 10
         : 0;
 
     centreComparisons.push({
@@ -552,8 +654,11 @@ async function getDdhsDistrictReport(start, end, options = {}) {
       division: centre.division,
       totalDoctors: centreDoctors.length,
       present: centrePresent,
+      presentWorking: centrePresentWorking,
       absent: centreAbsent,
       notMarked: centreNotMarked,
+      nonWorking: centreNonWorking,
+      eligibleWorkingDays: centreEligibleWorking,
       attendancePercentage: centrePct,
     });
   }
@@ -572,8 +677,8 @@ async function getDdhsDistrictReport(start, end, options = {}) {
     .slice(0, 10);
 
   const districtAttendancePercentage =
-    districtEligible > 0
-      ? Math.round((districtPresent / districtEligible) * 100 * 10) / 10
+    districtEligibleWorking > 0
+      ? Math.round((districtPresentWorking / districtEligibleWorking) * 100 * 10) / 10
       : 0;
 
   return {
@@ -585,8 +690,11 @@ async function getDdhsDistrictReport(start, end, options = {}) {
       activeHealthCentres: centres.length,
       totalDoctors: doctors.length,
       present: districtPresent,
+      presentWorking: districtPresentWorking,
       absent: districtAbsent,
       notMarked: districtNotMarked,
+      nonWorking: districtNonWorking,
+      eligibleWorkingDays: districtEligibleWorking,
       attendancePercentage: districtAttendancePercentage,
     },
     centreComparison: centreComparisons,
@@ -597,6 +705,7 @@ async function getDdhsDistrictReport(start, end, options = {}) {
 module.exports = {
   isValidDateString,
   resolveDateRange,
+  calculateDoctorMetricsForDates,
   getDoctorAttendanceSummary,
   getAttendanceHistoryData,
   getCentreAttendanceReport,

@@ -12,6 +12,10 @@ function DoctorDashboard({ email, onLogout }) {
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
 
+  // Upcoming Holidays
+  const [holidays, setHolidays] = useState([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(true);
+
   // History & Filters State
   const [historyItems, setHistoryItems] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, limit: 10, totalPages: 1, totalItems: 0 });
@@ -111,6 +115,34 @@ function DoctorDashboard({ email, onLogout }) {
     }
   };
 
+  // Load Upcoming Holidays (next 60 days)
+  const fetchHolidays = async () => {
+    try {
+      setHolidaysLoading(true);
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const futureStr = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+      const res = await fetch(
+        `http://localhost:5000/api/holidays?startDate=${todayStr}&endDate=${futureStr}`,
+        { credentials: "include" }
+      );
+
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await res.json();
+      if (res.ok) {
+        setHolidays(data.holidays || []);
+      }
+    } catch (err) {
+      console.error("Fetch holidays error:", err);
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
   // Load Attendance History
   const fetchHistory = async (page = 1) => {
     try {
@@ -154,6 +186,7 @@ function DoctorDashboard({ email, onLogout }) {
   useEffect(() => {
     fetchSummary();
     fetchHistory(1);
+    fetchHolidays();
   }, [startDate, endDate, statusFilter]);
 
   // Mark attendance
@@ -239,7 +272,7 @@ function DoctorDashboard({ email, onLogout }) {
         </div>
 
         <button className="logout-btn" onClick={onLogout}>
-          Logout
+            Logout
         </button>
       </header>
 
@@ -269,6 +302,8 @@ function DoctorDashboard({ email, onLogout }) {
                   ? "stat-present"
                   : attendanceStatus === "Absent"
                   ? "stat-absent"
+                  : attendanceStatus === "Non-Working Day"
+                  ? "stat-non-working"
                   : "stat-pending"
               }
             >
@@ -281,7 +316,9 @@ function DoctorDashboard({ email, onLogout }) {
         <div className="table-card">
           <h2>Daily Attendance</h2>
           <p>
-            Mark your attendance when you arrive at your assigned health centre.
+            {attendanceStatus === "Non-Working Day"
+              ? "Today is a scheduled Non-Working Day (Weekly Off or Holiday). Attendance marking is optional."
+              : "Mark your attendance when you arrive at your assigned health centre."}
           </p>
 
           <button
@@ -305,7 +342,7 @@ function DoctorDashboard({ email, onLogout }) {
             <div>
               <h2>My Attendance Summary</h2>
               <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
-                Period: {startDate} to {endDate}
+                Period: {startDate} to {endDate} • Denominator excludes weekly offs & holidays
               </p>
             </div>
           </div>
@@ -315,24 +352,73 @@ function DoctorDashboard({ email, onLogout }) {
           ) : summary ? (
             <div className="stats-grid" style={{ marginTop: "15px" }}>
               <div className="stat-card">
-                <p>Present Days</p>
-                <h2 className="stat-present">{summary.presentDays}</h2>
+                <p>Present (Working Days)</p>
+                <h2 className="stat-present">{summary.presentWorkingDays !== undefined ? summary.presentWorkingDays : summary.presentDays}</h2>
               </div>
               <div className="stat-card">
                 <p>Absent Days</p>
                 <h2 className="stat-absent">{summary.absentDays}</h2>
               </div>
               <div className="stat-card">
-                <p>Not Marked</p>
-                <h2 className="stat-pending">{summary.notMarkedDays}</h2>
+                <p>Non-Working Days</p>
+                <h2 style={{ color: "#0284c7" }}>{summary.nonWorkingDays || 0}</h2>
               </div>
               <div className="stat-card">
-                <p>Attendance %</p>
+                <p>Working-Day Attendance %</p>
                 <h2 className="stat-present">{summary.attendancePercentage}%</h2>
               </div>
             </div>
           ) : (
             <p style={{ marginTop: "15px", color: "#6b7280" }}>No summary available</p>
+          )}
+        </div>
+
+        {/* Upcoming Holidays / Non-Working Days Widget */}
+        <div className="table-card" style={{ marginTop: "30px" }}>
+          <div className="section-header-flex">
+            <div>
+              <h2>Upcoming Holidays & Non-Working Days</h2>
+              <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                District public holidays and centre-specific off-days
+              </p>
+            </div>
+          </div>
+
+          {holidaysLoading ? (
+            <p style={{ marginTop: "15px", color: "#6b7280" }}>Loading holidays...</p>
+          ) : holidays.length === 0 ? (
+            <p style={{ marginTop: "15px", color: "#6b7280" }}>No upcoming holidays scheduled in the next 60 days.</p>
+          ) : (
+            <div className="table-wrapper" style={{ marginTop: "15px" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Holiday Name</th>
+                    <th>Type</th>
+                    <th>Scope</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {holidays.map((h) => (
+                    <tr key={h._id || `${h.date}_${h.name}`}>
+                      <td><strong>{h.date}</strong></td>
+                      <td>{h.name}</td>
+                      <td>
+                        <span className="holiday-badge">{h.type || "PUBLIC"}</span>
+                      </td>
+                      <td>
+                        <span className="scope-badge">
+                          {h.scope === "CENTRE" ? `Centre (${h.healthCentre})` : "District-wide"}
+                        </span>
+                      </td>
+                      <td>{h.description || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
@@ -369,6 +455,7 @@ function DoctorDashboard({ email, onLogout }) {
                 <option value="">All Statuses</option>
                 <option value="Present">Present</option>
                 <option value="Absent">Absent</option>
+                <option value="Non-Working Day">Non-Working Day</option>
                 <option value="Not Marked">Not Marked</option>
               </select>
             </div>

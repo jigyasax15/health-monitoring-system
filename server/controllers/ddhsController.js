@@ -3,6 +3,7 @@ const Doctor = require("../models/Doctor");
 const Attendance = require("../models/Attendance");
 const { getTodayDateString } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
+const { getApplicableHolidays } = require("../utils/workingDays");
 
 // Get division-wide overview statistics for DDHS
 const getDdhsOverview = async (req, res) => {
@@ -14,11 +15,12 @@ const getDdhsOverview = async (req, res) => {
       isActive: { $ne: false },
     }).sort({ name: 1 });
 
-    // Fetch all doctors and today's attendance records
-    const doctors = await Doctor.find();
-    const attendanceRecords = await Attendance.find({
-      date: today,
-    });
+    // Fetch all doctors, today's attendance records, and today's holidays in parallel
+    const [doctors, attendanceRecords, holidayList] = await Promise.all([
+      Doctor.find(),
+      Attendance.find({ date: today }),
+      getApplicableHolidays(today, today, null),
+    ]);
 
     // Map centres and compute stats
     const centresData = activeCentres.map((centre) => {
@@ -32,6 +34,7 @@ const getDdhsOverview = async (req, res) => {
       let present = 0;
       let absent = 0;
       let notMarked = 0;
+      let nonWorking = 0;
 
       centreDoctors.forEach((doc) => {
         const attendance = attendanceRecords.find(
@@ -40,20 +43,25 @@ const getDdhsOverview = async (req, res) => {
 
         const status = determineAttendanceStatus(attendance, {
           targetDate: today,
+          healthCentre: doc.healthCentre,
+          holidayList,
         });
 
         if (status === "Present") {
           present++;
         } else if (status === "Absent") {
           absent++;
+        } else if (status === "Non-Working Day") {
+          nonWorking++;
         } else {
           notMarked++;
         }
       });
 
+      const eligibleToday = present + absent;
       const attendancePercentage =
-        totalDoctors > 0
-          ? Math.round((present / totalDoctors) * 100 * 10) / 10
+        eligibleToday > 0
+          ? Math.round((present / eligibleToday) * 100 * 10) / 10
           : 0;
 
       return {
@@ -66,6 +74,7 @@ const getDdhsOverview = async (req, res) => {
         present,
         absent,
         notMarked,
+        nonWorking,
         attendancePercentage,
       };
     });
@@ -79,9 +88,11 @@ const getDdhsOverview = async (req, res) => {
     const present = centresData.reduce((sum, c) => sum + c.present, 0);
     const absent = centresData.reduce((sum, c) => sum + c.absent, 0);
     const notMarked = centresData.reduce((sum, c) => sum + c.notMarked, 0);
+    const nonWorking = centresData.reduce((sum, c) => sum + c.nonWorking, 0);
+    const eligibleDivisionToday = present + absent;
     const attendancePercentage =
-      totalDoctors > 0
-        ? Math.round((present / totalDoctors) * 100 * 10) / 10
+      eligibleDivisionToday > 0
+        ? Math.round((present / eligibleDivisionToday) * 100 * 10) / 10
         : 0;
 
     res.json({
@@ -93,6 +104,7 @@ const getDdhsOverview = async (req, res) => {
         present,
         absent,
         notMarked,
+        nonWorking,
         attendancePercentage,
       },
       centres: centresData,

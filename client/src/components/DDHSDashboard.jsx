@@ -30,6 +30,21 @@ function DDHSDashboard({ user, onLogout }) {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
 
+  // Holiday Management State
+  const [holidays, setHolidays] = useState([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(true);
+  const [holidayForm, setHolidayForm] = useState({
+    name: "",
+    date: "",
+    type: "PUBLIC",
+    scope: "DISTRICT",
+    healthCentre: "",
+    description: "",
+  });
+  const [holidaySubmitting, setHolidaySubmitting] = useState(false);
+  const [holidayMsg, setHolidayMsg] = useState("");
+  const [holidayErr, setHolidayErr] = useState("");
+
   // 1. Fetch Today's Overview & Alerts
   const fetchTodayOverview = async () => {
     try {
@@ -160,8 +175,118 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
+  // 4. Fetch All Holidays
+  const fetchHolidays = async () => {
+    try {
+      setHolidaysLoading(true);
+      const res = await fetch("http://localhost:5000/api/holidays", {
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const dataRes = await res.json();
+      if (res.ok) {
+        setHolidays(dataRes.holidays || []);
+      }
+    } catch (err) {
+      console.error("Fetch holidays error:", err);
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
+  // 5. Create Holiday (District or Centre scope)
+  const handleCreateHoliday = async (e) => {
+    e.preventDefault();
+    setHolidayMsg("");
+    setHolidayErr("");
+
+    if (!holidayForm.name || !holidayForm.date) {
+      setHolidayErr("Please provide both holiday name and date.");
+      return;
+    }
+
+    if (holidayForm.scope === "CENTRE" && !holidayForm.healthCentre) {
+      setHolidayErr("Please select a health centre when scope is CENTRE.");
+      return;
+    }
+
+    try {
+      setHolidaySubmitting(true);
+      const res = await fetch("http://localhost:5000/api/holidays", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: holidayForm.name,
+          date: holidayForm.date,
+          type: holidayForm.type,
+          scope: holidayForm.scope,
+          healthCentre: holidayForm.scope === "CENTRE" ? holidayForm.healthCentre : null,
+          description: holidayForm.description,
+        }),
+      });
+
+      const dataRes = await res.json();
+      if (!res.ok) {
+        throw new Error(dataRes.message || "Failed to create holiday");
+      }
+
+      setHolidayMsg("Holiday created successfully!");
+      setHolidayForm({
+        name: "",
+        date: "",
+        type: "PUBLIC",
+        scope: "DISTRICT",
+        healthCentre: "",
+        description: "",
+      });
+      fetchHolidays();
+      fetchDistrictReport();
+      fetchTodayOverview();
+      fetchDivisionHistory(currentPage);
+    } catch (err) {
+      console.error("Create holiday error:", err);
+      setHolidayErr(err.message || "Could not create holiday");
+    } finally {
+      setHolidaySubmitting(false);
+    }
+  };
+
+  // 6. Delete Holiday
+  const handleDeleteHoliday = async (holidayId) => {
+    if (!window.confirm("Are you sure you want to delete this holiday entry?")) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/holidays/${holidayId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      const dataRes = await res.json();
+      if (!res.ok) {
+        throw new Error(dataRes.message || "Failed to delete holiday");
+      }
+
+      fetchHolidays();
+      fetchDistrictReport();
+      fetchTodayOverview();
+      fetchDivisionHistory(currentPage);
+    } catch (err) {
+      console.error("Delete holiday error:", err);
+      alert(err.message || "Could not delete holiday");
+    }
+  };
+
   useEffect(() => {
     fetchTodayOverview();
+    fetchHolidays();
   }, []);
 
   useEffect(() => {
@@ -175,6 +300,7 @@ function DDHSDashboard({ user, onLogout }) {
     present: 0,
     absent: 0,
     notMarked: 0,
+    nonWorking: 0,
     attendancePercentage: 0,
   };
 
@@ -217,6 +343,7 @@ function DDHSDashboard({ user, onLogout }) {
               fetchTodayOverview();
               fetchDistrictReport();
               fetchDivisionHistory(currentPage);
+              fetchHolidays();
             }}
             disabled={loading || alertsLoading}
             style={{ marginTop: 0 }}
@@ -266,8 +393,10 @@ function DDHSDashboard({ user, onLogout }) {
                 <h2 className="stat-absent">{totals.absent}</h2>
               </div>
               <div className="stat-card">
-                <p>Not Marked</p>
-                <h2 className="stat-pending">{totals.notMarked}</h2>
+                <p>Off / Not Marked</p>
+                <h2 className="stat-pending">
+                  {totals.nonWorking ? `${totals.nonWorking} (Off)` : totals.notMarked}
+                </h2>
               </div>
               <div className="stat-card">
                 <p>Today's Attendance %</p>
@@ -294,7 +423,7 @@ function DDHSDashboard({ user, onLogout }) {
                         <th>Total Doctors</th>
                         <th>Present</th>
                         <th>Absent</th>
-                        <th>Not Marked</th>
+                        <th>Off / Pending</th>
                         <th>Attendance %</th>
                       </tr>
                     </thead>
@@ -307,7 +436,7 @@ function DDHSDashboard({ user, onLogout }) {
                           <td>{centre.totalDoctors}</td>
                           <td className="table-present">{centre.present}</td>
                           <td className="table-absent">{centre.absent}</td>
-                          <td>{centre.notMarked}</td>
+                          <td>{centre.nonWorking ? `${centre.nonWorking} (Off)` : centre.notMarked}</td>
                           <td>{centre.attendancePercentage}%</td>
                         </tr>
                       ))}
@@ -321,7 +450,7 @@ function DDHSDashboard({ user, onLogout }) {
             <div className="table-card" style={{ marginTop: "30px" }}>
               <h2>District Attendance Reports & Comparisons</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
-                Multi-centre aggregation, historical performance comparisons, and absenteeism insights
+                Multi-centre aggregation, working-day performance comparisons, and absenteeism insights
               </p>
 
               {/* Filter controls */}
@@ -379,15 +508,15 @@ function DDHSDashboard({ user, onLogout }) {
                       <h2>{reportData.overallStats?.totalDoctors}</h2>
                     </div>
                     <div className="stat-card">
-                      <p>Total Present</p>
-                      <h2 className="stat-present">{reportData.overallStats?.present}</h2>
+                      <p>Present (Working Days)</p>
+                      <h2 className="stat-present">{reportData.overallStats?.presentWorking !== undefined ? reportData.overallStats?.presentWorking : reportData.overallStats?.present}</h2>
                     </div>
                     <div className="stat-card">
                       <p>Total Absent</p>
                       <h2 className="stat-absent">{reportData.overallStats?.absent}</h2>
                     </div>
                     <div className="stat-card">
-                      <p>Overall Attendance %</p>
+                      <p>Working-Day Attendance %</p>
                       <h2 className="stat-present">
                         {reportData.overallStats?.attendancePercentage}%
                       </h2>
@@ -406,9 +535,9 @@ function DDHSDashboard({ user, onLogout }) {
                           <th>Type</th>
                           <th>District</th>
                           <th>Doctors</th>
-                          <th>Present</th>
+                          <th>Present (Work)</th>
                           <th>Absent</th>
-                          <th>Not Marked</th>
+                          <th>Non-Working</th>
                           <th>Attendance %</th>
                         </tr>
                       </thead>
@@ -419,9 +548,9 @@ function DDHSDashboard({ user, onLogout }) {
                             <td>{centre.type}</td>
                             <td>{centre.district}</td>
                             <td>{centre.totalDoctors}</td>
-                            <td className="table-present">{centre.present}</td>
+                            <td className="table-present">{centre.presentWorking !== undefined ? centre.presentWorking : centre.present}</td>
                             <td className="table-absent">{centre.absent}</td>
-                            <td>{centre.notMarked}</td>
+                            <td>{centre.nonWorking || 0}</td>
                             <td>
                               <strong>{centre.attendancePercentage}%</strong>
                             </td>
@@ -433,7 +562,7 @@ function DDHSDashboard({ user, onLogout }) {
 
                   {/* High Absenteeism Doctors Section */}
                   <h3 style={{ marginTop: "30px", color: "#183153" }}>
-                    High-Absenteeism Doctors (Watchlist)
+                    High-Absenteeism Doctors (Missed Working Days Watchlist)
                   </h3>
                   {!reportData.highAbsenteeismDoctors ||
                   reportData.highAbsenteeismDoctors.length === 0 ? (
@@ -448,8 +577,8 @@ function DDHSDashboard({ user, onLogout }) {
                             <th>Doctor</th>
                             <th>Department</th>
                             <th>Health Centre</th>
-                            <th>Absent Days</th>
-                            <th>Present Days</th>
+                            <th>Absent Working Days</th>
+                            <th>Present (Work)</th>
                             <th>Attendance %</th>
                           </tr>
                         </thead>
@@ -462,7 +591,7 @@ function DDHSDashboard({ user, onLogout }) {
                               <td className="table-absent">
                                 <strong>{doc.absentDays}</strong>
                               </td>
-                              <td className="table-present">{doc.presentDays}</td>
+                              <td className="table-present">{doc.presentWorkingDays !== undefined ? doc.presentWorkingDays : doc.presentDays}</td>
                               <td>{doc.attendancePercentage}%</td>
                             </tr>
                           ))}
@@ -472,6 +601,177 @@ function DDHSDashboard({ user, onLogout }) {
                   )}
                 </>
               )}
+            </div>
+
+            {/* District Holiday Management Section */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <div className="section-header-flex">
+                <div>
+                  <h2>District Holiday Policy & Management</h2>
+                  <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                    Configure public district-wide holidays and centre-level specific non-working days
+                  </p>
+                </div>
+              </div>
+
+              {/* Add Holiday Form */}
+              <form
+                onSubmit={handleCreateHoliday}
+                style={{
+                  marginTop: "20px",
+                  padding: "16px",
+                  background: "#f8fafc",
+                  borderRadius: "10px",
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                <h4 style={{ margin: "0 0 12px", color: "#183153" }}>Add Holiday / Policy Day</h4>
+                <div className="filter-bar" style={{ margin: 0, padding: 0, background: "none", border: "none" }}>
+                  <div className="filter-group">
+                    <label>Holiday Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Gandhi Jayanti"
+                      value={holidayForm.name}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Date *</label>
+                    <input
+                      type="date"
+                      value={holidayForm.date}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, date: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Scope *</label>
+                    <select
+                      value={holidayForm.scope}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, scope: e.target.value })}
+                    >
+                      <option value="DISTRICT">DISTRICT (All Centres)</option>
+                      <option value="CENTRE">CENTRE (Specific Health Centre)</option>
+                    </select>
+                  </div>
+
+                  {holidayForm.scope === "CENTRE" && (
+                    <div className="filter-group">
+                      <label>Target Health Centre *</label>
+                      <select
+                        value={holidayForm.healthCentre}
+                        onChange={(e) => setHolidayForm({ ...holidayForm, healthCentre: e.target.value })}
+                        required
+                      >
+                        <option value="">Select Health Centre</option>
+                        {centres.map((c) => (
+                          <option key={c.name} value={c.name}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="filter-group">
+                    <label>Type</label>
+                    <select
+                      value={holidayForm.type}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, type: e.target.value })}
+                    >
+                      <option value="PUBLIC">PUBLIC</option>
+                      <option value="STATE">STATE</option>
+                      <option value="LOCAL">LOCAL</option>
+                      <option value="SPECIAL">SPECIAL</option>
+                    </select>
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Description (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="Optional notes"
+                      value={holidayForm.description}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="attendance-btn"
+                    style={{ marginTop: 0, height: "42px", alignSelf: "flex-end" }}
+                    disabled={holidaySubmitting}
+                  >
+                    {holidaySubmitting ? "Creating..." : "+ Add Holiday"}
+                  </button>
+                </div>
+
+                {holidayMsg && <p style={{ color: "#16a34a", margin: "10px 0 0", fontSize: "14px" }}>{holidayMsg}</p>}
+                {holidayErr && <p style={{ color: "#dc2626", margin: "10px 0 0", fontSize: "14px" }}>{holidayErr}</p>}
+              </form>
+
+              {/* Holiday List Table */}
+              <div style={{ marginTop: "20px" }}>
+                <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Configured Holidays & Off-Days</h4>
+                {holidaysLoading ? (
+                  <p style={{ color: "#6b7280" }}>Loading holidays...</p>
+                ) : holidays.length === 0 ? (
+                  <p style={{ color: "#6b7280" }}>No holidays currently registered.</p>
+                ) : (
+                  <div className="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Holiday Name</th>
+                          <th>Scope</th>
+                          <th>Type</th>
+                          <th>Health Centre</th>
+                          <th>Description</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {holidays.map((h) => (
+                          <tr key={h._id || `${h.date}_${h.name}`}>
+                            <td><strong>{h.date}</strong></td>
+                            <td>{h.name}</td>
+                            <td>
+                              <span className="scope-badge">
+                                {h.scope === "CENTRE" ? "CENTRE" : "DISTRICT"}
+                              </span>
+                            </td>
+                            <td><span className="holiday-badge">{h.type || "PUBLIC"}</span></td>
+                            <td>{h.healthCentre || "All Centres (District)"}</td>
+                            <td>{h.description || "-"}</td>
+                            <td>
+                              <button
+                                onClick={() => handleDeleteHoliday(h._id)}
+                                style={{
+                                  background: "#fee2e2",
+                                  color: "#991b1b",
+                                  border: "1px solid #fca5a5",
+                                  padding: "4px 10px",
+                                  borderRadius: "6px",
+                                  fontSize: "12px",
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Division-wide Attendance History Log */}
@@ -488,6 +788,7 @@ function DDHSDashboard({ user, onLogout }) {
                     <option value="">All Statuses</option>
                     <option value="Present">Present</option>
                     <option value="Absent">Absent</option>
+                    <option value="Non-Working Day">Non-Working Day</option>
                     <option value="Not Marked">Not Marked</option>
                   </select>
                 </div>
@@ -601,7 +902,7 @@ function DDHSDashboard({ user, onLogout }) {
                         <p>
                           <strong>{alert.healthCentre}</strong> • {alert.message} (
                           {alert.consecutiveDays}{" "}
-                          {alert.consecutiveDays === 1 ? "day" : "days"} absence)
+                          {alert.consecutiveDays === 1 ? "working day" : "working days"} absence)
                         </p>
                       </div>
 

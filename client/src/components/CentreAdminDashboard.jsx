@@ -31,6 +31,19 @@ function CentreAdminDashboard({ user, onLogout }) {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState("");
 
+  // Holiday Management State
+  const [holidays, setHolidays] = useState([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(true);
+  const [holidayForm, setHolidayForm] = useState({
+    name: "",
+    date: "",
+    type: "LOCAL",
+    description: "",
+  });
+  const [holidaySubmitting, setHolidaySubmitting] = useState(false);
+  const [holidayMsg, setHolidayMsg] = useState("");
+  const [holidayErr, setHolidayErr] = useState("");
+
   const assignedCentre = user?.healthCentre;
 
   // 1. Fetch Today's PHC Summary and Alerts
@@ -177,8 +190,106 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
+  // 4. Fetch Holidays
+  const fetchHolidays = async () => {
+    try {
+      setHolidaysLoading(true);
+      const res = await fetch("http://localhost:5000/api/holidays", {
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await res.json();
+      if (res.ok) {
+        setHolidays(data.holidays || []);
+      }
+    } catch (err) {
+      console.error("Fetch holidays error:", err);
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
+  // 5. Create Centre Holiday
+  const handleCreateHoliday = async (e) => {
+    e.preventDefault();
+    setHolidayMsg("");
+    setHolidayErr("");
+
+    if (!holidayForm.name || !holidayForm.date) {
+      setHolidayErr("Please provide both holiday name and date.");
+      return;
+    }
+
+    try {
+      setHolidaySubmitting(true);
+      const res = await fetch("http://localhost:5000/api/holidays", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: holidayForm.name,
+          date: holidayForm.date,
+          type: holidayForm.type,
+          scope: "CENTRE",
+          healthCentre: assignedCentre,
+          description: holidayForm.description,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to create holiday");
+      }
+
+      setHolidayMsg("Centre holiday added successfully!");
+      setHolidayForm({ name: "", date: "", type: "LOCAL", description: "" });
+      fetchHolidays();
+      fetchPeriodReport();
+      fetchTodayData();
+      fetchHistory(currentPage);
+    } catch (err) {
+      console.error("Create holiday error:", err);
+      setHolidayErr(err.message || "Could not create holiday");
+    } finally {
+      setHolidaySubmitting(false);
+    }
+  };
+
+  // 6. Delete Centre Holiday
+  const handleDeleteHoliday = async (holidayId) => {
+    if (!window.confirm("Are you sure you want to remove this centre holiday?")) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/holidays/${holidayId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to delete holiday");
+      }
+
+      fetchHolidays();
+      fetchPeriodReport();
+      fetchTodayData();
+      fetchHistory(currentPage);
+    } catch (err) {
+      console.error("Delete holiday error:", err);
+      alert(err.message || "Could not delete holiday");
+    }
+  };
+
   useEffect(() => {
     fetchTodayData();
+    fetchHolidays();
   }, [assignedCentre]);
 
   useEffect(() => {
@@ -242,8 +353,10 @@ function CentreAdminDashboard({ user, onLogout }) {
                 <h2 className="stat-absent">{summary.absent}</h2>
               </div>
               <div className="stat-card">
-                <p>Not Marked Today</p>
-                <h2 className="stat-pending">{summary.notMarked}</h2>
+                <p>Not Marked / Off</p>
+                <h2 className="stat-pending">
+                  {summary.nonWorking ? `${summary.nonWorking} (Off)` : summary.notMarked}
+                </h2>
               </div>
             </div>
 
@@ -291,7 +404,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             <div className="table-card" style={{ marginTop: "30px" }}>
               <h2>Attendance Reports & Analytics</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
-                Comprehensive attendance aggregation for {summary.healthCentre}
+                Comprehensive attendance aggregation for {summary.healthCentre} (excludes non-working days from percentage denominator)
               </p>
 
               {/* Date Filters */}
@@ -322,19 +435,19 @@ function CentreAdminDashboard({ user, onLogout }) {
                 <>
                   <div className="stats-grid" style={{ marginTop: "15px" }}>
                     <div className="stat-card">
-                      <p>Total Days in Period</p>
-                      <h2>{reportData.totalDays}</h2>
+                      <p>Total Working Days</p>
+                      <h2>{reportData.eligibleWorkingDays || reportData.eligibleDays}</h2>
                     </div>
                     <div className="stat-card">
-                      <p>Total Present</p>
-                      <h2 className="stat-present">{reportData.present}</h2>
+                      <p>Total Present (Working)</p>
+                      <h2 className="stat-present">{reportData.presentWorking !== undefined ? reportData.presentWorking : reportData.present}</h2>
                     </div>
                     <div className="stat-card">
                       <p>Total Absent</p>
                       <h2 className="stat-absent">{reportData.absent}</h2>
                     </div>
                     <div className="stat-card">
-                      <p>Period Attendance %</p>
+                      <p>Working-Day Attendance %</p>
                       <h2 className="stat-present">{reportData.attendancePercentage}%</h2>
                     </div>
                   </div>
@@ -350,9 +463,9 @@ function CentreAdminDashboard({ user, onLogout }) {
                           <tr>
                             <th>Doctor</th>
                             <th>Department</th>
-                            <th>Present Days</th>
-                            <th>Absent Days</th>
-                            <th>Not Marked</th>
+                            <th>Present (Work)</th>
+                            <th>Absent</th>
+                            <th>Non-Working</th>
                             <th>Attendance %</th>
                           </tr>
                         </thead>
@@ -361,9 +474,9 @@ function CentreAdminDashboard({ user, onLogout }) {
                             <tr key={doc.id || doc.email}>
                               <td><strong>{doc.name}</strong></td>
                               <td>{doc.department}</td>
-                              <td className="table-present">{doc.presentDays}</td>
+                              <td className="table-present">{doc.presentWorkingDays !== undefined ? doc.presentWorkingDays : doc.presentDays}</td>
                               <td className="table-absent">{doc.absentDays}</td>
-                              <td>{doc.notMarkedDays}</td>
+                              <td>{doc.nonWorkingDays || 0}</td>
                               <td>
                                 <strong>{doc.attendancePercentage}%</strong>
                               </td>
@@ -384,8 +497,8 @@ function CentreAdminDashboard({ user, onLogout }) {
                             <tr>
                               <th>Department</th>
                               <th>Doctors</th>
-                              <th>Present Days</th>
-                              <th>Absent Days</th>
+                              <th>Present (Work)</th>
+                              <th>Absent</th>
                               <th>Attendance %</th>
                             </tr>
                           </thead>
@@ -394,7 +507,7 @@ function CentreAdminDashboard({ user, onLogout }) {
                               <tr key={dept.department}>
                                 <td><strong>{dept.department}</strong></td>
                                 <td>{dept.totalDoctors}</td>
-                                <td className="table-present">{dept.presentDays}</td>
+                                <td className="table-present">{dept.presentWorkingDays !== undefined ? dept.presentWorkingDays : dept.presentDays}</td>
                                 <td className="table-absent">{dept.absentDays}</td>
                                 <td><strong>{dept.attendancePercentage}%</strong></td>
                               </tr>
@@ -406,6 +519,153 @@ function CentreAdminDashboard({ user, onLogout }) {
                   )}
                 </>
               )}
+            </div>
+
+            {/* Centre Holiday & Working-Day Management Section */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <div className="section-header-flex">
+                <div>
+                  <h2>Health Centre Holidays & Off-Days</h2>
+                  <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                    Manage centre-specific local holidays and view district-wide public holidays
+                  </p>
+                </div>
+              </div>
+
+              {/* Add Centre Holiday Form */}
+              <form
+                onSubmit={handleCreateHoliday}
+                style={{
+                  marginTop: "20px",
+                  padding: "16px",
+                  background: "#f8fafc",
+                  borderRadius: "10px",
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                <h4 style={{ margin: "0 0 12px", color: "#183153" }}>Add Centre-Specific Holiday</h4>
+                <div className="filter-bar" style={{ margin: 0, padding: 0, background: "none", border: "none" }}>
+                  <div className="filter-group">
+                    <label>Holiday Name *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Centre Maintenance Day"
+                      value={holidayForm.name}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Date *</label>
+                    <input
+                      type="date"
+                      value={holidayForm.date}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, date: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Type</label>
+                    <select
+                      value={holidayForm.type}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, type: e.target.value })}
+                    >
+                      <option value="LOCAL">LOCAL</option>
+                      <option value="SPECIAL">SPECIAL</option>
+                      <option value="PUBLIC">PUBLIC</option>
+                      <option value="STATE">STATE</option>
+                    </select>
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Description (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="Optional notes"
+                      value={holidayForm.description}
+                      onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="attendance-btn"
+                    style={{ marginTop: 0, height: "42px", alignSelf: "flex-end" }}
+                    disabled={holidaySubmitting}
+                  >
+                    {holidaySubmitting ? "Adding..." : "+ Add Holiday"}
+                  </button>
+                </div>
+
+                {holidayMsg && <p style={{ color: "#16a34a", margin: "10px 0 0", fontSize: "14px" }}>{holidayMsg}</p>}
+                {holidayErr && <p style={{ color: "#dc2626", margin: "10px 0 0", fontSize: "14px" }}>{holidayErr}</p>}
+              </form>
+
+              {/* Holiday List Table */}
+              <div style={{ marginTop: "20px" }}>
+                <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Applicable Holidays</h4>
+                {holidaysLoading ? (
+                  <p style={{ color: "#6b7280" }}>Loading holidays...</p>
+                ) : holidays.length === 0 ? (
+                  <p style={{ color: "#6b7280" }}>No holidays currently registered.</p>
+                ) : (
+                  <div className="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Holiday Name</th>
+                          <th>Type</th>
+                          <th>Scope</th>
+                          <th>Description</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {holidays.map((h) => {
+                          const isCentreOwned = h.scope === "CENTRE" && h.healthCentre === assignedCentre;
+                          return (
+                            <tr key={h._id || `${h.date}_${h.name}`}>
+                              <td><strong>{h.date}</strong></td>
+                              <td>{h.name}</td>
+                              <td><span className="holiday-badge">{h.type || "PUBLIC"}</span></td>
+                              <td>
+                                <span className="scope-badge">
+                                  {h.scope === "CENTRE" ? `Centre (${h.healthCentre})` : "District-wide"}
+                                </span>
+                              </td>
+                              <td>{h.description || "-"}</td>
+                              <td>
+                                {isCentreOwned ? (
+                                  <button
+                                    onClick={() => handleDeleteHoliday(h._id)}
+                                    style={{
+                                      background: "#fee2e2",
+                                      color: "#991b1b",
+                                      border: "1px solid #fca5a5",
+                                      padding: "4px 10px",
+                                      borderRadius: "6px",
+                                      fontSize: "12px",
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                ) : (
+                                  <span style={{ color: "#9ca3af", fontSize: "12px" }}>District Policy</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Detailed Attendance History Log */}
@@ -453,6 +713,7 @@ function CentreAdminDashboard({ user, onLogout }) {
                     <option value="">All Statuses</option>
                     <option value="Present">Present</option>
                     <option value="Absent">Absent</option>
+                    <option value="Non-Working Day">Non-Working Day</option>
                     <option value="Not Marked">Not Marked</option>
                   </select>
                 </div>
@@ -561,7 +822,7 @@ function CentreAdminDashboard({ user, onLogout }) {
                         <h3>{alert.doctorName}</h3>
                         <p>
                           {alert.message} • {alert.consecutiveDays}{" "}
-                          {alert.consecutiveDays === 1 ? "day" : "days"} absence
+                          {alert.consecutiveDays === 1 ? "working day" : "working days"} absence
                         </p>
                       </div>
 
