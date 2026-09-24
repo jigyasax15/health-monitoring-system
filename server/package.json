@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test tests/workingDays.test.js tests/attendanceStatus.test.js tests/alertStreak.test.js tests/reportMetrics.test.js tests/securityRbac.test.js",
+    "test": "node --test tests/workingDays.test.js tests/attendanceStatus.test.js tests/alertStreak.test.js tests/reportMetrics.test.js tests/securityRbac.test.js tests/alertLifecycle.test.js",
     "start": "node server.js"
   },
   "keywords": [],

@@ -6,10 +6,31 @@ function DDHSDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Division alerts
+  // Alert Lifecycle Management State
   const [alerts, setAlerts] = useState([]);
+  const [alertsSummary, setAlertsSummary] = useState({
+    active: 0,
+    acknowledged: 0,
+    resolved: 0,
+    highPriority: 0,
+    escalated: 0,
+  });
+  const [alertsPagination, setAlertsPagination] = useState({ page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+  const [alertCurrentPage, setAlertCurrentPage] = useState(1);
+  const [alertCentreFilter, setAlertCentreFilter] = useState("");
+  const [alertStatusFilter, setAlertStatusFilter] = useState("");
+  const [alertSeverityFilter, setAlertSeverityFilter] = useState("");
+  const [alertDoctorFilter, setAlertDoctorFilter] = useState("");
+  const [alertEscalatedFilter, setAlertEscalatedFilter] = useState("");
   const [alertsLoading, setAlertsLoading] = useState(true);
   const [alertsError, setAlertsError] = useState("");
+
+  // Alert Action Modals State
+  const [activeModal, setActiveModal] = useState(null); // 'ACKNOWLEDGE' | 'ADD_NOTE' | 'RESOLVE' | 'AUDIT_TRAIL' | null
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  const [modalInput, setModalInput] = useState("");
+  const [modalSubmitting, setModalSubmitting] = useState(false);
+  const [modalError, setModalError] = useState("");
 
   // District Period Report
   const defaultStartDate = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -45,7 +66,7 @@ function DDHSDashboard({ user, onLogout }) {
   const [holidayMsg, setHolidayMsg] = useState("");
   const [holidayErr, setHolidayErr] = useState("");
 
-  // 1. Fetch Today's Overview & Alerts
+  // 1. Fetch Today's Overview
   const fetchTodayOverview = async () => {
     try {
       setLoading(true);
@@ -72,12 +93,40 @@ function DDHSDashboard({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
+  };
 
+  // 2. Fetch Division Alerts & Summary with Lifecycle Support
+  const fetchAlerts = async (page = 1) => {
     try {
       setAlertsLoading(true);
       setAlertsError("");
 
-      const alertRes = await fetch("http://localhost:5000/api/ddhs/alerts", {
+      // Fetch summary stats
+      const summaryUrl = alertCentreFilter
+        ? `http://localhost:5000/api/alerts/summary?centre=${encodeURIComponent(alertCentreFilter)}`
+        : "http://localhost:5000/api/alerts/summary";
+
+      const summaryRes = await fetch(summaryUrl, { credentials: "include" });
+      if (summaryRes.status === 401) {
+        onLogout();
+        return;
+      }
+      const summaryData = await summaryRes.json();
+      if (summaryRes.ok && summaryData.summary) {
+        setAlertsSummary(summaryData.summary);
+      }
+
+      // Fetch filtered alerts
+      const params = new URLSearchParams();
+      params.set("page", page.toString());
+      params.set("limit", "10");
+      if (alertCentreFilter) params.set("healthCentre", alertCentreFilter);
+      if (alertStatusFilter) params.set("status", alertStatusFilter);
+      if (alertSeverityFilter) params.set("severity", alertSeverityFilter);
+      if (alertDoctorFilter) params.set("doctorEmail", alertDoctorFilter);
+      if (alertEscalatedFilter) params.set("escalated", alertEscalatedFilter);
+
+      const alertRes = await fetch(`http://localhost:5000/api/alerts?${params.toString()}`, {
         credentials: "include",
       });
 
@@ -86,12 +135,14 @@ function DDHSDashboard({ user, onLogout }) {
         return;
       }
 
-      const alertResult = await alertRes.json();
+      const alertData = await alertRes.json();
       if (!alertRes.ok) {
-        throw new Error(alertResult.message || "Failed to load alerts");
+        throw new Error(alertData.message || "Failed to load division alerts");
       }
 
-      setAlerts(alertResult.alerts || []);
+      setAlerts(alertData.alerts || []);
+      setAlertsPagination(alertData.pagination || { page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+      setAlertCurrentPage(alertData.pagination?.page || 1);
     } catch (err) {
       console.error("Fetch DDHS alerts error:", err);
       setAlertsError(err.message || "Could not load alerts");
@@ -100,7 +151,7 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // 2. Fetch District Period Report
+  // 3. Fetch District Period Report
   const fetchDistrictReport = async () => {
     try {
       setReportLoading(true);
@@ -135,7 +186,7 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // 3. Fetch Division Attendance History
+  // 4. Fetch Division Attendance History
   const fetchDivisionHistory = async (page = 1) => {
     try {
       setHistoryLoading(true);
@@ -159,23 +210,23 @@ function DDHSDashboard({ user, onLogout }) {
         return;
       }
 
-      const dataResult = await res.json();
+      const data = await res.json();
       if (!res.ok) {
-        throw new Error(dataResult.message || "Failed to load history");
+        throw new Error(data.message || "Failed to load division history");
       }
 
-      setHistoryItems(dataResult.items || []);
-      setPagination(dataResult.pagination || { page: 1, limit: 15, totalPages: 1, totalItems: 0 });
-      setCurrentPage(dataResult.pagination?.page || 1);
+      setHistoryItems(data.items || []);
+      setPagination(data.pagination || { page: 1, limit: 15, totalPages: 1, totalItems: 0 });
+      setCurrentPage(data.pagination?.page || 1);
     } catch (err) {
       console.error("Fetch division history error:", err);
-      setHistoryError(err.message || "Could not load history");
+      setHistoryError(err.message || "Could not load division history");
     } finally {
       setHistoryLoading(false);
     }
   };
 
-  // 4. Fetch All Holidays
+  // 5. Fetch Holidays
   const fetchHolidays = async () => {
     try {
       setHolidaysLoading(true);
@@ -188,9 +239,9 @@ function DDHSDashboard({ user, onLogout }) {
         return;
       }
 
-      const dataRes = await res.json();
+      const holidayData = await res.json();
       if (res.ok) {
-        setHolidays(dataRes.holidays || []);
+        setHolidays(holidayData.holidays || []);
       }
     } catch (err) {
       console.error("Fetch holidays error:", err);
@@ -199,19 +250,19 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // 5. Create Holiday (District or Centre scope)
+  // 6. Create Holiday
   const handleCreateHoliday = async (e) => {
     e.preventDefault();
     setHolidayMsg("");
     setHolidayErr("");
 
     if (!holidayForm.name || !holidayForm.date) {
-      setHolidayErr("Please provide both holiday name and date.");
+      setHolidayErr("Please provide holiday name and date.");
       return;
     }
 
     if (holidayForm.scope === "CENTRE" && !holidayForm.healthCentre) {
-      setHolidayErr("Please select a health centre when scope is CENTRE.");
+      setHolidayErr("Please specify target health centre for centre-specific holiday.");
       return;
     }
 
@@ -226,14 +277,14 @@ function DDHSDashboard({ user, onLogout }) {
           date: holidayForm.date,
           type: holidayForm.type,
           scope: holidayForm.scope,
-          healthCentre: holidayForm.scope === "CENTRE" ? holidayForm.healthCentre : null,
+          healthCentre: holidayForm.scope === "CENTRE" ? holidayForm.healthCentre : undefined,
           description: holidayForm.description,
         }),
       });
 
-      const dataRes = await res.json();
+      const resData = await res.json();
       if (!res.ok) {
-        throw new Error(dataRes.message || "Failed to create holiday");
+        throw new Error(resData.message || "Failed to create holiday");
       }
 
       setHolidayMsg("Holiday created successfully!");
@@ -257,9 +308,9 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // 6. Delete Holiday
+  // 7. Delete Holiday
   const handleDeleteHoliday = async (holidayId) => {
-    if (!window.confirm("Are you sure you want to delete this holiday entry?")) {
+    if (!window.confirm("Are you sure you want to remove this holiday?")) {
       return;
     }
 
@@ -269,9 +320,9 @@ function DDHSDashboard({ user, onLogout }) {
         credentials: "include",
       });
 
-      const dataRes = await res.json();
+      const resData = await res.json();
       if (!res.ok) {
-        throw new Error(dataRes.message || "Failed to delete holiday");
+        throw new Error(resData.message || "Failed to delete holiday");
       }
 
       fetchHolidays();
@@ -284,34 +335,136 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
+  // Modal Handlers for Alert Actions
+  const openModal = (type, alert) => {
+    setSelectedAlert(alert);
+    setActiveModal(type);
+    setModalInput("");
+    setModalError("");
+  };
+
+  const closeModal = () => {
+    setActiveModal(null);
+    setSelectedAlert(null);
+    setModalInput("");
+    setModalError("");
+  };
+
+  const handleAcknowledgeAlert = async (e) => {
+    e.preventDefault();
+    if (!selectedAlert) return;
+
+    try {
+      setModalSubmitting(true);
+      setModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/acknowledge`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ actionNote: modalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to acknowledge alert");
+      }
+
+      closeModal();
+      fetchAlerts(alertCurrentPage);
+    } catch (err) {
+      setModalError(err.message || "Could not acknowledge alert");
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
+  const handleAddNote = async (e) => {
+    e.preventDefault();
+    if (!selectedAlert) return;
+    if (!modalInput.trim()) {
+      setModalError("Please enter note content.");
+      return;
+    }
+
+    try {
+      setModalSubmitting(true);
+      setModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ note: modalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to add note");
+      }
+
+      closeModal();
+      fetchAlerts(alertCurrentPage);
+    } catch (err) {
+      setModalError(err.message || "Could not add note");
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
+  const handleResolveAlert = async (e) => {
+    e.preventDefault();
+    if (!selectedAlert) return;
+    if (!modalInput.trim()) {
+      setModalError("Please provide a short resolution note (e.g. 'DDHS office approved leave' or 'Issue resolved').");
+      return;
+    }
+
+    try {
+      setModalSubmitting(true);
+      setModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ resolutionNote: modalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to resolve alert");
+      }
+
+      closeModal();
+      fetchAlerts(alertCurrentPage);
+    } catch (err) {
+      setModalError(err.message || "Could not resolve alert");
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     fetchTodayOverview();
     fetchHolidays();
   }, []);
 
   useEffect(() => {
+    fetchAlerts(1);
+  }, [alertCentreFilter, alertStatusFilter, alertSeverityFilter, alertDoctorFilter, alertEscalatedFilter]);
+
+  useEffect(() => {
     fetchDistrictReport();
     fetchDivisionHistory(1);
   }, [startDate, endDate, centreFilter, historyStatusFilter]);
-
-  const totals = data?.totals || {
-    activeHealthCentres: 0,
-    totalDoctors: 0,
-    present: 0,
-    absent: 0,
-    notMarked: 0,
-    nonWorking: 0,
-    attendancePercentage: 0,
-  };
-
-  const centres = data?.centres || [];
 
   return (
     <div className="admin-dashboard">
       <header className="dashboard-header">
         <div>
           <h2>Health Monitoring System</h2>
-          <p>Deputy Director of Health Services Portal</p>
+          <p>DDHS Division Portal</p>
         </div>
 
         <button className="logout-btn" onClick={onLogout}>
@@ -320,140 +473,318 @@ function DDHSDashboard({ user, onLogout }) {
       </header>
 
       <main className="dashboard-content">
-        <div
-          className="welcome-section"
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: "15px",
-          }}
-        >
-          <div>
-            <h1>DDHS Monitoring Dashboard</h1>
-            <p>
-              Division-wide healthcare monitoring • {user?.name || "DDHS Officer"}
-            </p>
-          </div>
-
-          <button
-            className="attendance-btn"
-            onClick={() => {
-              fetchTodayOverview();
-              fetchDistrictReport();
-              fetchDivisionHistory(currentPage);
-              fetchHolidays();
-            }}
-            disabled={loading || alertsLoading}
-            style={{ marginTop: 0 }}
-          >
-            {loading || alertsLoading ? "Refreshing..." : "Refresh All Data"}
-          </button>
-        </div>
-
-        {loading && !data && (
+        {loading && (
           <div className="table-card">
-            <p>Loading division overview...</p>
+            <p>Loading division dashboard...</p>
           </div>
         )}
 
         {!loading && error && (
           <div className="table-card">
-            <h2>Unable to Load Division Data</h2>
+            <h2>Unable to Load Division Overview</h2>
             <p className="stat-absent">{error}</p>
-            <button
-              className="attendance-btn"
-              onClick={fetchTodayOverview}
-              style={{ marginTop: "15px" }}
-            >
-              Try Again
-            </button>
           </div>
         )}
 
-        {data && !error && (
+        {!loading && !error && data && (
           <>
-            {/* Today's Stats */}
+            <div className="welcome-section">
+              <h1>Division Attendance Overview</h1>
+              <p>
+                Directorate of Health Services • Monitoring {data.totals.activeHealthCentres} Health Centres ({data.date})
+              </p>
+            </div>
+
+            {/* Division Total Stats */}
             <div className="stats-grid">
               <div className="stat-card">
-                <p>Health Centres</p>
-                <h2>{totals.activeHealthCentres}</h2>
-              </div>
-              <div className="stat-card">
                 <p>Total Doctors</p>
-                <h2>{totals.totalDoctors}</h2>
+                <h2>{data.totals.totalDoctors}</h2>
               </div>
               <div className="stat-card">
                 <p>Present Today</p>
-                <h2 className="stat-present">{totals.present}</h2>
+                <h2 className="stat-present">{data.totals.present}</h2>
               </div>
               <div className="stat-card">
                 <p>Absent Today</p>
-                <h2 className="stat-absent">{totals.absent}</h2>
+                <h2 className="stat-absent">{data.totals.absent}</h2>
               </div>
               <div className="stat-card">
-                <p>Off / Not Marked</p>
+                <p>Not Marked / Off</p>
                 <h2 className="stat-pending">
-                  {totals.nonWorking ? `${totals.nonWorking} (Off)` : totals.notMarked}
+                  {data.totals.nonWorking
+                    ? `${data.totals.nonWorking} (Off)`
+                    : data.totals.notMarked}
                 </h2>
-              </div>
-              <div className="stat-card">
-                <p>Today's Attendance %</p>
-                <h2 className="stat-present">{totals.attendancePercentage}%</h2>
               </div>
             </div>
 
-            {/* Today's Health Centre Overview Table */}
-            <div className="table-card">
-              <h2>Today's Health Centre Status ({data.date})</h2>
-
-              {centres.length === 0 ? (
-                <p style={{ marginTop: "15px", color: "#6b7280" }}>
-                  No active health centres found in the division.
-                </p>
-              ) : (
-                <div className="table-wrapper">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Health Centre</th>
-                        <th>Type</th>
-                        <th>District</th>
-                        <th>Total Doctors</th>
-                        <th>Present</th>
-                        <th>Absent</th>
-                        <th>Off / Pending</th>
-                        <th>Attendance %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {centres.map((centre) => (
-                        <tr key={centre.id}>
-                          <td><strong>{centre.name}</strong></td>
-                          <td>{centre.type}</td>
-                          <td>{centre.district}</td>
-                          <td>{centre.totalDoctors}</td>
-                          <td className="table-present">{centre.present}</td>
-                          <td className="table-absent">{centre.absent}</td>
-                          <td>{centre.nonWorking ? `${centre.nonWorking} (Off)` : centre.notMarked}</td>
-                          <td>{centre.attendancePercentage}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+            {/* Division-wide Absenteeism Alerts & Escalation Management */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <div className="section-header-flex">
+                <div>
+                  <h2>Division Absenteeism Alerts & Escalation Management</h2>
+                  <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                    Division-wide supervision of doctor absenteeism, administrative notes, and urgent escalated cases (&gt;24 hours).
+                  </p>
                 </div>
+              </div>
+
+              {/* Alert Summary KPI Cards */}
+              <div className="stats-grid" style={{ marginTop: "18px" }}>
+                <div className="stat-card" style={{ borderLeft: "4px solid #ef4444" }}>
+                  <p>Total Active Alerts</p>
+                  <h2 style={{ color: "#b91c1c" }}>{alertsSummary.active}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #ea580c" }}>
+                  <p>High Priority (Critical/High)</p>
+                  <h2 style={{ color: "#c2410c" }}>{alertsSummary.highPriority}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #7f1d1d" }}>
+                  <p>Escalated to DDHS (&gt;24h)</p>
+                  <h2 style={{ color: "#7f1d1d" }}>{alertsSummary.escalated}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #f59e0b" }}>
+                  <p>Acknowledged</p>
+                  <h2 style={{ color: "#d97706" }}>{alertsSummary.acknowledged}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #16a34a" }}>
+                  <p>Resolved</p>
+                  <h2 style={{ color: "#15803d" }}>{alertsSummary.resolved}</h2>
+                </div>
+              </div>
+
+              {/* Division Alert Filters */}
+              <div className="filter-bar" style={{ marginTop: "20px" }}>
+                <div className="filter-group">
+                  <label>Health Centre</label>
+                  <select
+                    value={alertCentreFilter}
+                    onChange={(e) => setAlertCentreFilter(e.target.value)}
+                  >
+                    <option value="">All Health Centres</option>
+                    {(data?.centres || []).map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name} ({c.type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Alert Status</label>
+                  <select
+                    value={alertStatusFilter}
+                    onChange={(e) => setAlertStatusFilter(e.target.value)}
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
+                    <option value="RESOLVED">RESOLVED</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Severity</label>
+                  <select
+                    value={alertSeverityFilter}
+                    onChange={(e) => setAlertSeverityFilter(e.target.value)}
+                  >
+                    <option value="">All Severities</option>
+                    <option value="critical">CRITICAL (3+ Days)</option>
+                    <option value="high">HIGH (2 Days)</option>
+                    <option value="medium">MEDIUM (1 Day)</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Escalation State</label>
+                  <select
+                    value={alertEscalatedFilter}
+                    onChange={(e) => setAlertEscalatedFilter(e.target.value)}
+                  >
+                    <option value="">All Alerts</option>
+                    <option value="true">⚠️ Escalated to DDHS Only</option>
+                    <option value="false">Non-Escalated</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Alerts List Table */}
+              {alertsLoading && <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading division alerts...</p>}
+              {alertsError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{alertsError}</p>}
+
+              {!alertsLoading && !alertsError && alerts.length === 0 && (
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>
+                  No absenteeism alerts found matching selected criteria.
+                </p>
+              )}
+
+              {!alertsLoading && !alertsError && alerts.length > 0 && (
+                <>
+                  <div className="table-wrapper" style={{ marginTop: "15px" }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Health Centre</th>
+                          <th>Doctor</th>
+                          <th>Consecutive Absence</th>
+                          <th>Severity</th>
+                          <th>Status</th>
+                          <th>Escalation</th>
+                          <th>Last Activity / Note</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alerts.map((alert) => {
+                          const isResolved = alert.status === "RESOLVED" || alert.resolved;
+                          const isAck = alert.status === "ACKNOWLEDGED";
+                          return (
+                            <tr key={alert._id || alert.id}>
+                              <td>
+                                <strong>{alert.healthCentre}</strong>
+                              </td>
+                              <td>
+                                <strong>{alert.doctorName}</strong>
+                                <br />
+                                <span style={{ fontSize: "12px", color: "#64748b" }}>{alert.doctorEmail}</span>
+                              </td>
+                              <td>
+                                <strong>{alert.consecutiveDays}</strong> {alert.consecutiveDays === 1 ? "working day" : "working days"}
+                              </td>
+                              <td>
+                                <span className={`badge-${alert.severity?.toLowerCase() || "medium"}`}>
+                                  {alert.severity}
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`badge-${(alert.status || "ACTIVE").toLowerCase()}`}>
+                                  {alert.status || "ACTIVE"}
+                                </span>
+                              </td>
+                              <td>
+                                {alert.isEscalated ? (
+                                  <span className="badge-escalated">⚠️ ESCALATED</span>
+                                ) : (
+                                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>Normal</span>
+                                )}
+                              </td>
+                              <td>
+                                <span style={{ fontSize: "12px", color: "#334155" }}>
+                                  {alert.latestActionNote || alert.resolutionNote || alert.message}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                  {!isResolved && !isAck && (
+                                    <button
+                                      className="alert-action-btn btn-ack"
+                                      onClick={() => openModal("ACKNOWLEDGE", alert)}
+                                    >
+                                      Acknowledge
+                                    </button>
+                                  )}
+                                  {!isResolved && (
+                                    <button
+                                      className="alert-action-btn btn-note"
+                                      onClick={() => openModal("ADD_NOTE", alert)}
+                                    >
+                                      + Note
+                                    </button>
+                                  )}
+                                  {!isResolved && (
+                                    <button
+                                      className="alert-action-btn btn-resolve"
+                                      onClick={() => openModal("RESOLVE", alert)}
+                                    >
+                                      Resolve
+                                    </button>
+                                  )}
+                                  <button
+                                    className="alert-action-btn btn-detail"
+                                    onClick={() => openModal("AUDIT_TRAIL", alert)}
+                                  >
+                                    History ({alert.actions?.length || 1})
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="pagination-bar">
+                    <span>
+                      Page {alertsPagination.page} of {alertsPagination.totalPages || 1} ({alertsPagination.totalItems} total alerts)
+                    </span>
+                    <div className="pagination-buttons">
+                      <button
+                        disabled={alertCurrentPage <= 1}
+                        onClick={() => fetchAlerts(alertCurrentPage - 1)}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        disabled={alertCurrentPage >= alertsPagination.totalPages}
+                        onClick={() => fetchAlerts(alertCurrentPage + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
 
-            {/* District Attendance Reporting & Analytics Section */}
+            {/* Centre Breakdown Table */}
             <div className="table-card" style={{ marginTop: "30px" }}>
-              <h2>District Attendance Reports & Comparisons</h2>
+              <h2>Health Centre Status Breakdown</h2>
+
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Health Centre</th>
+                      <th>Type</th>
+                      <th>District</th>
+                      <th>Total Staff</th>
+                      <th>Present</th>
+                      <th>Absent</th>
+                      <th>Not Marked / Off</th>
+                      <th>Rate %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(data?.centres || []).map((c) => (
+                      <tr key={c.id}>
+                        <td><strong>{c.name}</strong></td>
+                        <td>{c.type}</td>
+                        <td>{c.district}</td>
+                        <td>{c.totalDoctors}</td>
+                        <td className="table-present">{c.present}</td>
+                        <td className="table-absent">{c.absent}</td>
+                        <td>{c.nonWorking ? `${c.nonWorking} (Off)` : c.notMarked}</td>
+                        <td>
+                          <strong>{c.attendancePercentage}%</strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* District Attendance Report Section */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <h2>District Attendance Reports & Analytics</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
-                Multi-centre aggregation, working-day performance comparisons, and absenteeism insights
+                Multi-centre analytics aggregated across eligible working days (excludes weekends and holidays)
               </p>
 
-              {/* Filter controls */}
+              {/* Filters */}
               <div className="filter-bar">
                 <div className="filter-group">
                   <label>From Date</label>
@@ -474,142 +805,111 @@ function DDHSDashboard({ user, onLogout }) {
                 </div>
 
                 <div className="filter-group">
-                  <label>Health Centre Filter</label>
+                  <label>Filter by Health Centre</label>
                   <select
                     value={centreFilter}
                     onChange={(e) => setCentreFilter(e.target.value)}
                   >
                     <option value="">All Health Centres</option>
-                    {centres.map((c) => (
+                    {(data?.centres || []).map((c) => (
                       <option key={c.name} value={c.name}>
-                        {c.name} ({c.type})
+                        {c.name}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              {reportLoading && (
-                <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading district report...</p>
-              )}
-              {reportError && (
-                <p style={{ color: "#dc2626", marginTop: "15px" }}>{reportError}</p>
-              )}
+              {reportLoading && <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading report...</p>}
+              {reportError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{reportError}</p>}
 
               {!reportLoading && !reportError && reportData && (
                 <>
                   <div className="stats-grid" style={{ marginTop: "15px" }}>
                     <div className="stat-card">
-                      <p>Centres in Scope</p>
-                      <h2>{reportData.overallStats?.activeHealthCentres}</h2>
+                      <p>Total Working Days</p>
+                      <h2>
+                        {reportData.overallStats?.eligibleWorkingDays ??
+                          reportData.eligibleWorkingDays ??
+                          reportData.eligibleDays ??
+                          0}
+                      </h2>
                     </div>
                     <div className="stat-card">
-                      <p>Total Doctors</p>
-                      <h2>{reportData.overallStats?.totalDoctors}</h2>
-                    </div>
-                    <div className="stat-card">
-                      <p>Present (Working Days)</p>
-                      <h2 className="stat-present">{reportData.overallStats?.presentWorking !== undefined ? reportData.overallStats?.presentWorking : reportData.overallStats?.present}</h2>
+                      <p>Total Present (Working)</p>
+                      <h2 className="stat-present">
+                        {reportData.overallStats?.presentWorking !== undefined
+                          ? reportData.overallStats.presentWorking
+                          : (reportData.presentWorking !== undefined
+                              ? reportData.presentWorking
+                              : reportData.present ?? 0)}
+                      </h2>
                     </div>
                     <div className="stat-card">
                       <p>Total Absent</p>
-                      <h2 className="stat-absent">{reportData.overallStats?.absent}</h2>
+                      <h2 className="stat-absent">
+                        {reportData.overallStats?.absent !== undefined
+                          ? reportData.overallStats.absent
+                          : (reportData.absent ?? 0)}
+                      </h2>
                     </div>
                     <div className="stat-card">
-                      <p>Working-Day Attendance %</p>
+                      <p>Division Attendance %</p>
                       <h2 className="stat-present">
-                        {reportData.overallStats?.attendancePercentage}%
+                        {reportData.overallStats?.attendancePercentage !== undefined
+                          ? reportData.overallStats.attendancePercentage
+                          : (reportData.attendancePercentage ?? 0)}%
                       </h2>
                     </div>
                   </div>
 
-                  {/* Centre-wise Comparison Table */}
-                  <h3 style={{ marginTop: "25px", color: "#183153" }}>
-                    Centre-wise Period Performance ({startDate} to {endDate})
-                  </h3>
+                  {/* Centre-wise Performance Table */}
+                  <h3 style={{ marginTop: "25px", color: "#183153" }}>Centre Performance Summary</h3>
                   <div className="table-wrapper">
                     <table>
                       <thead>
                         <tr>
                           <th>Health Centre</th>
-                          <th>Type</th>
-                          <th>District</th>
-                          <th>Doctors</th>
+                          <th>Total Staff</th>
                           <th>Present (Work)</th>
                           <th>Absent</th>
-                          <th>Non-Working</th>
                           <th>Attendance %</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {reportData.centreComparison?.map((centre) => (
-                          <tr key={centre.id || centre.name}>
-                            <td><strong>{centre.name}</strong></td>
-                            <td>{centre.type}</td>
-                            <td>{centre.district}</td>
-                            <td>{centre.totalDoctors}</td>
-                            <td className="table-present">{centre.presentWorking !== undefined ? centre.presentWorking : centre.present}</td>
-                            <td className="table-absent">{centre.absent}</td>
-                            <td>{centre.nonWorking || 0}</td>
+                        {(reportData.centreComparison || reportData.centreSummary || []).map((cs) => (
+                          <tr key={cs.id || cs.name || cs.centreName}>
+                            <td><strong>{cs.name || cs.centreName}</strong></td>
+                            <td>{cs.totalDoctors ?? 0}</td>
+                            <td className="table-present">
+                              {cs.presentWorking !== undefined
+                                ? cs.presentWorking
+                                : (cs.presentWorkingDays !== undefined
+                                    ? cs.presentWorkingDays
+                                    : cs.presentDays ?? cs.present ?? 0)}
+                            </td>
+                            <td className="table-absent">
+                              {cs.absent !== undefined ? cs.absent : (cs.absentDays ?? 0)}
+                            </td>
                             <td>
-                              <strong>{centre.attendancePercentage}%</strong>
+                              <strong>{cs.attendancePercentage ?? 0}%</strong>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-
-                  {/* High Absenteeism Doctors Section */}
-                  <h3 style={{ marginTop: "30px", color: "#183153" }}>
-                    High-Absenteeism Doctors (Missed Working Days Watchlist)
-                  </h3>
-                  {!reportData.highAbsenteeismDoctors ||
-                  reportData.highAbsenteeismDoctors.length === 0 ? (
-                    <p style={{ color: "#6b7280", marginTop: "10px" }}>
-                      No doctor absences recorded in the selected period.
-                    </p>
-                  ) : (
-                    <div className="table-wrapper">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Doctor</th>
-                            <th>Department</th>
-                            <th>Health Centre</th>
-                            <th>Absent Working Days</th>
-                            <th>Present (Work)</th>
-                            <th>Attendance %</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {reportData.highAbsenteeismDoctors.map((doc) => (
-                            <tr key={doc.id || doc.email}>
-                              <td><strong>{doc.name}</strong></td>
-                              <td>{doc.department}</td>
-                              <td>{doc.healthCentre}</td>
-                              <td className="table-absent">
-                                <strong>{doc.absentDays}</strong>
-                              </td>
-                              <td className="table-present">{doc.presentWorkingDays !== undefined ? doc.presentWorkingDays : doc.presentDays}</td>
-                              <td>{doc.attendancePercentage}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
                 </>
               )}
             </div>
 
-            {/* District Holiday Management Section */}
+            {/* Division-Wide Holiday Management Section */}
             <div className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
-                  <h2>District Holiday Policy & Management</h2>
+                  <h2>Division & Centre Holiday Policies</h2>
                   <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
-                    Configure public district-wide holidays and centre-level specific non-working days
+                    Configure district-wide public holidays and centre-specific off-days
                   </p>
                 </div>
               </div>
@@ -625,13 +925,13 @@ function DDHSDashboard({ user, onLogout }) {
                   border: "1px solid #e2e8f0",
                 }}
               >
-                <h4 style={{ margin: "0 0 12px", color: "#183153" }}>Add Holiday / Policy Day</h4>
+                <h4 style={{ margin: "0 0 12px", color: "#183153" }}>Register New Holiday</h4>
                 <div className="filter-bar" style={{ margin: 0, padding: 0, background: "none", border: "none" }}>
                   <div className="filter-group">
                     <label>Holiday Name *</label>
                     <input
                       type="text"
-                      placeholder="e.g. Gandhi Jayanti"
+                      placeholder="e.g. Republic Day"
                       value={holidayForm.name}
                       onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
                       required
@@ -649,26 +949,26 @@ function DDHSDashboard({ user, onLogout }) {
                   </div>
 
                   <div className="filter-group">
-                    <label>Scope *</label>
+                    <label>Scope</label>
                     <select
                       value={holidayForm.scope}
                       onChange={(e) => setHolidayForm({ ...holidayForm, scope: e.target.value })}
                     >
                       <option value="DISTRICT">DISTRICT (All Centres)</option>
-                      <option value="CENTRE">CENTRE (Specific Health Centre)</option>
+                      <option value="CENTRE">CENTRE Specific</option>
                     </select>
                   </div>
 
                   {holidayForm.scope === "CENTRE" && (
                     <div className="filter-group">
-                      <label>Target Health Centre *</label>
+                      <label>Target Centre *</label>
                       <select
                         value={holidayForm.healthCentre}
                         onChange={(e) => setHolidayForm({ ...holidayForm, healthCentre: e.target.value })}
                         required
                       >
-                        <option value="">Select Health Centre</option>
-                        {centres.map((c) => (
+                        <option value="">Select Centre</option>
+                        {(data?.centres || []).map((c) => (
                           <option key={c.name} value={c.name}>
                             {c.name}
                           </option>
@@ -694,7 +994,7 @@ function DDHSDashboard({ user, onLogout }) {
                     <label>Description (Optional)</label>
                     <input
                       type="text"
-                      placeholder="Optional notes"
+                      placeholder="Description"
                       value={holidayForm.description}
                       onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
                     />
@@ -706,7 +1006,7 @@ function DDHSDashboard({ user, onLogout }) {
                     style={{ marginTop: 0, height: "42px", alignSelf: "flex-end" }}
                     disabled={holidaySubmitting}
                   >
-                    {holidaySubmitting ? "Creating..." : "+ Add Holiday"}
+                    {holidaySubmitting ? "Adding..." : "+ Add Holiday"}
                   </button>
                 </div>
 
@@ -716,7 +1016,7 @@ function DDHSDashboard({ user, onLogout }) {
 
               {/* Holiday List Table */}
               <div style={{ marginTop: "20px" }}>
-                <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Configured Holidays & Off-Days</h4>
+                <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Registered Holidays</h4>
                 {holidaysLoading ? (
                   <p style={{ color: "#6b7280" }}>Loading holidays...</p>
                 ) : holidays.length === 0 ? (
@@ -728,9 +1028,8 @@ function DDHSDashboard({ user, onLogout }) {
                         <tr>
                           <th>Date</th>
                           <th>Holiday Name</th>
-                          <th>Scope</th>
                           <th>Type</th>
-                          <th>Health Centre</th>
+                          <th>Scope</th>
                           <th>Description</th>
                           <th>Action</th>
                         </tr>
@@ -740,13 +1039,12 @@ function DDHSDashboard({ user, onLogout }) {
                           <tr key={h._id || `${h.date}_${h.name}`}>
                             <td><strong>{h.date}</strong></td>
                             <td>{h.name}</td>
+                            <td><span className="holiday-badge">{h.type || "PUBLIC"}</span></td>
                             <td>
                               <span className="scope-badge">
-                                {h.scope === "CENTRE" ? "CENTRE" : "DISTRICT"}
+                                {h.scope === "CENTRE" ? `Centre (${h.healthCentre})` : "District-wide"}
                               </span>
                             </td>
-                            <td><span className="holiday-badge">{h.type || "PUBLIC"}</span></td>
-                            <td>{h.healthCentre || "All Centres (District)"}</td>
                             <td>{h.description || "-"}</td>
                             <td>
                               <button
@@ -774,13 +1072,29 @@ function DDHSDashboard({ user, onLogout }) {
               </div>
             </div>
 
-            {/* Division-wide Attendance History Log */}
+            {/* Division Detailed Attendance History Log */}
             <div className="table-card" style={{ marginTop: "30px" }}>
               <h2>Division Attendance Logs</h2>
 
+              {/* Filter controls */}
               <div className="filter-bar">
                 <div className="filter-group">
-                  <label>Status Filter</label>
+                  <label>Health Centre</label>
+                  <select
+                    value={centreFilter}
+                    onChange={(e) => setCentreFilter(e.target.value)}
+                  >
+                    <option value="">All Health Centres</option>
+                    {(data?.centres || []).map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Status</label>
                   <select
                     value={historyStatusFilter}
                     onChange={(e) => setHistoryStatusFilter(e.target.value)}
@@ -795,7 +1109,7 @@ function DDHSDashboard({ user, onLogout }) {
               </div>
 
               {historyLoading && (
-                <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading logs...</p>
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading division logs...</p>
               )}
               {historyError && (
                 <p style={{ color: "#dc2626", marginTop: "15px" }}>{historyError}</p>
@@ -873,64 +1187,170 @@ function DDHSDashboard({ user, onLogout }) {
                 </>
               )}
             </div>
-
-            {/* Division Absenteeism Alerts Card */}
-            <div className="alerts-card" style={{ marginTop: "30px" }}>
-              <div className="alerts-heading">
-                <h2>Active Division Absenteeism Alerts</h2>
-                <span>{alerts.length} Active</span>
-              </div>
-
-              {alertsLoading && (
-                <p style={{ marginTop: "15px", color: "#6b7280" }}>
-                  Loading division alerts...
-                </p>
-              )}
-              {!alertsLoading && alertsError && (
-                <p style={{ marginTop: "15px", color: "#dc2626" }}>{alertsError}</p>
-              )}
-              {!alertsLoading && !alertsError && alerts.length === 0 && (
-                <p style={{ marginTop: "15px", color: "#6b7280" }}>No active absenteeism alerts</p>
-              )}
-
-              {!alertsLoading && !alertsError && alerts.length > 0 && (
-                <div style={{ marginTop: "10px" }}>
-                  {alerts.map((alert) => (
-                    <div className="alert-item" key={alert._id || alert.id}>
-                      <div>
-                        <h3>{alert.doctorName}</h3>
-                        <p>
-                          <strong>{alert.healthCentre}</strong> • {alert.message} (
-                          {alert.consecutiveDays}{" "}
-                          {alert.consecutiveDays === 1 ? "working day" : "working days"} absence)
-                        </p>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <strong
-                          style={{
-                            color:
-                              alert.severity === "critical"
-                                ? "#dc2626"
-                                : alert.severity === "high"
-                                ? "#ea580c"
-                                : "#d97706",
-                            textTransform: "uppercase",
-                            fontSize: "13px",
-                            letterSpacing: "0.5px",
-                          }}
-                        >
-                          {alert.severity}
-                        </strong>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </>
         )}
       </main>
+
+      {/* Action Modals */}
+      {activeModal && selectedAlert && (
+        <div className="modal-backdrop" onClick={closeModal}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            {activeModal === "ACKNOWLEDGE" && (
+              <form onSubmit={handleAcknowledgeAlert}>
+                <div className="modal-header">
+                  <h3>Acknowledge Alert (DDHS)</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Acknowledge absenteeism alert for <strong>{selectedAlert.doctorName}</strong> at <strong>{selectedAlert.healthCentre}</strong> ({selectedAlert.consecutiveDays} missed working days).
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Action Note (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Noted by DDHS office; contacted centre admin"
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                    />
+                  </div>
+                  {modalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{modalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-ack" disabled={modalSubmitting}>
+                    {modalSubmitting ? "Acknowledging..." : "Confirm Acknowledgment"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeModal === "ADD_NOTE" && (
+              <form onSubmit={handleAddNote}>
+                <div className="modal-header">
+                  <h3>Add Administrative Note (DDHS)</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Record a note or directive for <strong>{selectedAlert.doctorName}</strong> ({selectedAlert.healthCentre}) without closing the alert.
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Note Content *</label>
+                    <textarea
+                      rows={3}
+                      style={{
+                        padding: "10px",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "6px",
+                        fontFamily: "inherit",
+                        fontSize: "14px",
+                      }}
+                      placeholder="e.g. Requested status update from PHC Medical Officer Incharge."
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                  {modalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{modalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-note" disabled={modalSubmitting}>
+                    {modalSubmitting ? "Saving..." : "Save Note"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeModal === "RESOLVE" && (
+              <form onSubmit={handleResolveAlert}>
+                <div className="modal-header">
+                  <h3>Resolve Alert (DDHS)</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Resolve absence alert for <strong>{selectedAlert.doctorName}</strong> ({selectedAlert.healthCentre}). Please specify the resolution reason.
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Resolution Note *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Duty resumed / Deputation approved / Administrative issue settled"
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                  {modalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{modalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-resolve" disabled={modalSubmitting}>
+                    {modalSubmitting ? "Resolving..." : "Confirm Resolution"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeModal === "AUDIT_TRAIL" && (
+              <div>
+                <div className="modal-header">
+                  <h3>Alert History & Audit Trail</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <div style={{ marginBottom: "16px", padding: "12px", background: "#f1f5f9", borderRadius: "8px" }}>
+                    <h4 style={{ margin: "0 0 6px", color: "#183153" }}>{selectedAlert.doctorName}</h4>
+                    <p style={{ margin: "0", fontSize: "13px", color: "#475569" }}>
+                      Centre: <strong>{selectedAlert.healthCentre}</strong> • Streak: <strong>{selectedAlert.consecutiveDays} days</strong> • Status: <span className={`badge-${(selectedAlert.status || "ACTIVE").toLowerCase()}`}>{selectedAlert.status || "ACTIVE"}</span>
+                    </p>
+                  </div>
+
+                  <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Action Timeline</h4>
+                  <div className="audit-timeline">
+                    {(selectedAlert.actions && selectedAlert.actions.length > 0 ? selectedAlert.actions : [
+                      {
+                        action: "CREATED",
+                        performedBy: "system",
+                        role: "system",
+                        note: selectedAlert.message,
+                        timestamp: selectedAlert.createdAt,
+                      },
+                    ]).map((entry, idx) => (
+                      <div className="timeline-item" key={entry._id || idx}>
+                        <div className={`timeline-dot ${entry.action.toLowerCase()}`} />
+                        <div className="timeline-content">
+                          <div className="timeline-meta">
+                            <span className="timeline-action-tag">{entry.action}</span>
+                            <span>{new Date(entry.timestamp).toLocaleString("en-IN")}</span>
+                          </div>
+                          <p className="timeline-note">{entry.note || "-"}</p>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                            By: {entry.performedBy} ({entry.role})
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

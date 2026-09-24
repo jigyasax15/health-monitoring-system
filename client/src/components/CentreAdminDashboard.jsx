@@ -6,10 +6,30 @@ function CentreAdminDashboard({ user, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // Absenteeism alerts
+  // Alert Lifecycle Management State
   const [alerts, setAlerts] = useState([]);
+  const [alertsSummary, setAlertsSummary] = useState({
+    active: 0,
+    acknowledged: 0,
+    resolved: 0,
+    highPriority: 0,
+    escalated: 0,
+  });
+  const [alertsPagination, setAlertsPagination] = useState({ page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+  const [alertCurrentPage, setAlertCurrentPage] = useState(1);
+  const [alertStatusFilter, setAlertStatusFilter] = useState("");
+  const [alertSeverityFilter, setAlertSeverityFilter] = useState("");
+  const [alertDoctorFilter, setAlertDoctorFilter] = useState("");
+  const [alertEscalatedFilter, setAlertEscalatedFilter] = useState("");
   const [alertsLoading, setAlertsLoading] = useState(true);
   const [alertsError, setAlertsError] = useState("");
+
+  // Alert Action Modals State
+  const [activeModal, setActiveModal] = useState(null); // 'ACKNOWLEDGE' | 'ADD_NOTE' | 'RESOLVE' | 'AUDIT_TRAIL' | null
+  const [selectedAlert, setSelectedAlert] = useState(null);
+  const [modalInput, setModalInput] = useState("");
+  const [modalSubmitting, setModalSubmitting] = useState(false);
+  const [modalError, setModalError] = useState("");
 
   // Period Report State
   const defaultStartDate = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -46,12 +66,11 @@ function CentreAdminDashboard({ user, onLogout }) {
 
   const assignedCentre = user?.healthCentre;
 
-  // 1. Fetch Today's PHC Summary and Alerts
+  // 1. Fetch Today's PHC Summary
   const fetchTodayData = async () => {
     if (!assignedCentre) {
       setError("No health centre assigned to this administrator account.");
       setLoading(false);
-      setAlertsLoading(false);
       return;
     }
 
@@ -81,13 +100,40 @@ function CentreAdminDashboard({ user, onLogout }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 2. Fetch Alerts Summary & List with Lifecycle Support
+  const fetchAlerts = async (page = 1) => {
+    if (!assignedCentre) return;
 
     try {
       setAlertsLoading(true);
       setAlertsError("");
 
+      // Fetch summary stats
+      const summaryRes = await fetch("http://localhost:5000/api/alerts/summary", {
+        credentials: "include",
+      });
+      if (summaryRes.status === 401) {
+        onLogout();
+        return;
+      }
+      const summaryData = await summaryRes.json();
+      if (summaryRes.ok && summaryData.summary) {
+        setAlertsSummary(summaryData.summary);
+      }
+
+      // Fetch filtered alerts list
+      const params = new URLSearchParams();
+      params.set("page", page.toString());
+      params.set("limit", "10");
+      if (alertStatusFilter) params.set("status", alertStatusFilter);
+      if (alertSeverityFilter) params.set("severity", alertSeverityFilter);
+      if (alertDoctorFilter) params.set("doctorEmail", alertDoctorFilter);
+      if (alertEscalatedFilter) params.set("escalated", alertEscalatedFilter);
+
       const alertRes = await fetch(
-        `http://localhost:5000/api/alerts/centre?centre=${encodeURIComponent(assignedCentre)}`,
+        `http://localhost:5000/api/alerts?${params.toString()}`,
         { credentials: "include" }
       );
 
@@ -102,6 +148,8 @@ function CentreAdminDashboard({ user, onLogout }) {
       }
 
       setAlerts(alertData.alerts || []);
+      setAlertsPagination(alertData.pagination || { page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+      setAlertCurrentPage(alertData.pagination?.page || 1);
     } catch (err) {
       console.error("Fetch alerts error:", err);
       setAlertsError(err.message || "Could not load alerts");
@@ -110,7 +158,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 2. Fetch Centre Period Report
+  // 3. Fetch Centre Period Report
   const fetchPeriodReport = async () => {
     if (!assignedCentre) return;
 
@@ -147,7 +195,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 3. Fetch Centre Attendance History
+  // 4. Fetch Centre Attendance History
   const fetchHistory = async (page = 1) => {
     if (!assignedCentre) return;
 
@@ -190,7 +238,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 4. Fetch Holidays
+  // 5. Fetch Holidays
   const fetchHolidays = async () => {
     try {
       setHolidaysLoading(true);
@@ -214,7 +262,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 5. Create Centre Holiday
+  // 6. Create Centre Holiday
   const handleCreateHoliday = async (e) => {
     e.preventDefault();
     setHolidayMsg("");
@@ -260,7 +308,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 6. Delete Centre Holiday
+  // 7. Delete Centre Holiday
   const handleDeleteHoliday = async (holidayId) => {
     if (!window.confirm("Are you sure you want to remove this centre holiday?")) {
       return;
@@ -287,10 +335,124 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
+  // Modal Handlers for Alert Actions
+  const openModal = (type, alert) => {
+    setSelectedAlert(alert);
+    setActiveModal(type);
+    setModalInput("");
+    setModalError("");
+  };
+
+  const closeModal = () => {
+    setActiveModal(null);
+    setSelectedAlert(null);
+    setModalInput("");
+    setModalError("");
+  };
+
+  const handleAcknowledgeAlert = async (e) => {
+    e.preventDefault();
+    if (!selectedAlert) return;
+
+    try {
+      setModalSubmitting(true);
+      setModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/acknowledge`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ actionNote: modalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to acknowledge alert");
+      }
+
+      closeModal();
+      fetchAlerts(alertCurrentPage);
+    } catch (err) {
+      setModalError(err.message || "Could not acknowledge alert");
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
+  const handleAddNote = async (e) => {
+    e.preventDefault();
+    if (!selectedAlert) return;
+    if (!modalInput.trim()) {
+      setModalError("Please enter note content.");
+      return;
+    }
+
+    try {
+      setModalSubmitting(true);
+      setModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ note: modalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to add note");
+      }
+
+      closeModal();
+      fetchAlerts(alertCurrentPage);
+    } catch (err) {
+      setModalError(err.message || "Could not add note");
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
+  const handleResolveAlert = async (e) => {
+    e.preventDefault();
+    if (!selectedAlert) return;
+    if (!modalInput.trim()) {
+      setModalError("Please provide a short resolution note (e.g. 'Doctor resumed duty' or 'Approved leave verified').");
+      return;
+    }
+
+    try {
+      setModalSubmitting(true);
+      setModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ resolutionNote: modalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to resolve alert");
+      }
+
+      closeModal();
+      fetchAlerts(alertCurrentPage);
+    } catch (err) {
+      setModalError(err.message || "Could not resolve alert");
+    } finally {
+      setModalSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     fetchTodayData();
     fetchHolidays();
   }, [assignedCentre]);
+
+  useEffect(() => {
+    fetchAlerts(1);
+  }, [assignedCentre, alertStatusFilter, alertSeverityFilter, alertDoctorFilter, alertEscalatedFilter]);
 
   useEffect(() => {
     fetchPeriodReport();
@@ -360,8 +522,220 @@ function CentreAdminDashboard({ user, onLogout }) {
               </div>
             </div>
 
+            {/* Absenteeism Alert Management & Escalation Section */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <div className="section-header-flex">
+                <div>
+                  <h2>Absenteeism Alerts & Escalation Management</h2>
+                  <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                    Track consecutive missed working days, acknowledge notifications, record administrative notes, and resolve issues.
+                  </p>
+                </div>
+              </div>
+
+              {/* Alert Summary KPI Cards */}
+              <div className="stats-grid" style={{ marginTop: "18px" }}>
+                <div className="stat-card" style={{ borderLeft: "4px solid #ef4444" }}>
+                  <p>Active Alerts</p>
+                  <h2 style={{ color: "#b91c1c" }}>{alertsSummary.active}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #ea580c" }}>
+                  <p>High Priority (Critical/High)</p>
+                  <h2 style={{ color: "#c2410c" }}>{alertsSummary.highPriority}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #f59e0b" }}>
+                  <p>Acknowledged</p>
+                  <h2 style={{ color: "#d97706" }}>{alertsSummary.acknowledged}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #7f1d1d" }}>
+                  <p>Escalated to DDHS (&gt;24h)</p>
+                  <h2 style={{ color: "#7f1d1d" }}>{alertsSummary.escalated}</h2>
+                </div>
+              </div>
+
+              {/* Alert Filters */}
+              <div className="filter-bar" style={{ marginTop: "20px" }}>
+                <div className="filter-group">
+                  <label>Alert Status</label>
+                  <select
+                    value={alertStatusFilter}
+                    onChange={(e) => setAlertStatusFilter(e.target.value)}
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
+                    <option value="RESOLVED">RESOLVED</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Severity</label>
+                  <select
+                    value={alertSeverityFilter}
+                    onChange={(e) => setAlertSeverityFilter(e.target.value)}
+                  >
+                    <option value="">All Severities</option>
+                    <option value="critical">CRITICAL (3+ Days)</option>
+                    <option value="high">HIGH (2 Days)</option>
+                    <option value="medium">MEDIUM (1 Day)</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Doctor</label>
+                  <select
+                    value={alertDoctorFilter}
+                    onChange={(e) => setAlertDoctorFilter(e.target.value)}
+                  >
+                    <option value="">All Doctors</option>
+                    {summary.doctors.map((d) => (
+                      <option key={d.email} value={d.email}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Escalation State</label>
+                  <select
+                    value={alertEscalatedFilter}
+                    onChange={(e) => setAlertEscalatedFilter(e.target.value)}
+                  >
+                    <option value="">All Alerts</option>
+                    <option value="true">Escalated Only</option>
+                    <option value="false">Non-Escalated</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Alerts List Table */}
+              {alertsLoading && <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading alerts...</p>}
+              {alertsError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{alertsError}</p>}
+
+              {!alertsLoading && !alertsError && alerts.length === 0 && (
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>
+                  No absenteeism alerts found matching selected criteria.
+                </p>
+              )}
+
+              {!alertsLoading && !alertsError && alerts.length > 0 && (
+                <>
+                  <div className="table-wrapper" style={{ marginTop: "15px" }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Doctor</th>
+                          <th>Consecutive Absence</th>
+                          <th>Severity</th>
+                          <th>Status</th>
+                          <th>Escalation</th>
+                          <th>Last Activity / Note</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {alerts.map((alert) => {
+                          const isResolved = alert.status === "RESOLVED" || alert.resolved;
+                          const isAck = alert.status === "ACKNOWLEDGED";
+                          return (
+                            <tr key={alert._id || alert.id}>
+                              <td>
+                                <strong>{alert.doctorName}</strong>
+                                <br />
+                                <span style={{ fontSize: "12px", color: "#64748b" }}>{alert.doctorEmail}</span>
+                              </td>
+                              <td>
+                                <strong>{alert.consecutiveDays}</strong> {alert.consecutiveDays === 1 ? "working day" : "working days"}
+                              </td>
+                              <td>
+                                <span className={`badge-${alert.severity?.toLowerCase() || "medium"}`}>
+                                  {alert.severity}
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`badge-${(alert.status || "ACTIVE").toLowerCase()}`}>
+                                  {alert.status || "ACTIVE"}
+                                </span>
+                              </td>
+                              <td>
+                                {alert.isEscalated ? (
+                                  <span className="badge-escalated">⚠️ ESCALATED</span>
+                                ) : (
+                                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>Normal</span>
+                                )}
+                              </td>
+                              <td>
+                                <span style={{ fontSize: "12px", color: "#334155" }}>
+                                  {alert.latestActionNote || alert.resolutionNote || alert.message}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                  {!isResolved && !isAck && (
+                                    <button
+                                      className="alert-action-btn btn-ack"
+                                      onClick={() => openModal("ACKNOWLEDGE", alert)}
+                                    >
+                                      Acknowledge
+                                    </button>
+                                  )}
+                                  {!isResolved && (
+                                    <button
+                                      className="alert-action-btn btn-note"
+                                      onClick={() => openModal("ADD_NOTE", alert)}
+                                    >
+                                      + Note
+                                    </button>
+                                  )}
+                                  {!isResolved && (
+                                    <button
+                                      className="alert-action-btn btn-resolve"
+                                      onClick={() => openModal("RESOLVE", alert)}
+                                    >
+                                      Resolve
+                                    </button>
+                                  )}
+                                  <button
+                                    className="alert-action-btn btn-detail"
+                                    onClick={() => openModal("AUDIT_TRAIL", alert)}
+                                  >
+                                    History ({alert.actions?.length || 1})
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="pagination-bar">
+                    <span>
+                      Page {alertsPagination.page} of {alertsPagination.totalPages || 1} ({alertsPagination.totalItems} total alerts)
+                    </span>
+                    <div className="pagination-buttons">
+                      <button
+                        disabled={alertCurrentPage <= 1}
+                        onClick={() => fetchAlerts(alertCurrentPage - 1)}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        disabled={alertCurrentPage >= alertsPagination.totalPages}
+                        onClick={() => fetchAlerts(alertCurrentPage + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             {/* Today's Doctor Attendance Table */}
-            <div className="table-card">
+            <div className="table-card" style={{ marginTop: "30px" }}>
               <h2>Today's Doctor Attendance ({summary.date})</h2>
 
               {summary.doctors.length === 0 ? (
@@ -796,61 +1170,170 @@ function CentreAdminDashboard({ user, onLogout }) {
                 </>
               )}
             </div>
-
-            {/* Absenteeism Alerts Card */}
-            <div className="alerts-card" style={{ marginTop: "30px" }}>
-              <div className="alerts-heading">
-                <h2>Absenteeism Alerts</h2>
-                <span>{alerts.length} Active</span>
-              </div>
-
-              {alertsLoading && (
-                <p style={{ marginTop: "15px", color: "#6b7280" }}>Loading alerts...</p>
-              )}
-              {!alertsLoading && alertsError && (
-                <p style={{ marginTop: "15px", color: "#dc2626" }}>{alertsError}</p>
-              )}
-              {!alertsLoading && !alertsError && alerts.length === 0 && (
-                <p style={{ marginTop: "15px", color: "#6b7280" }}>No active absenteeism alerts</p>
-              )}
-
-              {!alertsLoading && !alertsError && alerts.length > 0 && (
-                <div style={{ marginTop: "10px" }}>
-                  {alerts.map((alert) => (
-                    <div className="alert-item" key={alert._id || alert.id}>
-                      <div>
-                        <h3>{alert.doctorName}</h3>
-                        <p>
-                          {alert.message} • {alert.consecutiveDays}{" "}
-                          {alert.consecutiveDays === 1 ? "working day" : "working days"} absence
-                        </p>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <strong
-                          style={{
-                            color:
-                              alert.severity === "critical"
-                                ? "#dc2626"
-                                : alert.severity === "high"
-                                ? "#ea580c"
-                                : "#d97706",
-                            textTransform: "uppercase",
-                            fontSize: "13px",
-                            letterSpacing: "0.5px",
-                          }}
-                        >
-                          {alert.severity}
-                        </strong>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </>
         )}
       </main>
+
+      {/* Action Modals */}
+      {activeModal && selectedAlert && (
+        <div className="modal-backdrop" onClick={closeModal}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            {activeModal === "ACKNOWLEDGE" && (
+              <form onSubmit={handleAcknowledgeAlert}>
+                <div className="modal-header">
+                  <h3>Acknowledge Alert</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Acknowledge absenteeism alert for <strong>{selectedAlert.doctorName}</strong> ({selectedAlert.consecutiveDays} missed working days).
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Action Note (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Contacted doctor for clarification"
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                    />
+                  </div>
+                  {modalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{modalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-ack" disabled={modalSubmitting}>
+                    {modalSubmitting ? "Acknowledging..." : "Confirm Acknowledgment"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeModal === "ADD_NOTE" && (
+              <form onSubmit={handleAddNote}>
+                <div className="modal-header">
+                  <h3>Add Administrative Note</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Record an action or note for <strong>{selectedAlert.doctorName}</strong> without changing alert status.
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Note Content *</label>
+                    <textarea
+                      rows={3}
+                      style={{
+                        padding: "10px",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "6px",
+                        fontFamily: "inherit",
+                        fontSize: "14px",
+                      }}
+                      placeholder="e.g. Called doctor, requested explanation for absence."
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                  {modalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{modalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-note" disabled={modalSubmitting}>
+                    {modalSubmitting ? "Saving..." : "Save Note"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeModal === "RESOLVE" && (
+              <form onSubmit={handleResolveAlert}>
+                <div className="modal-header">
+                  <h3>Resolve Alert</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Resolve absence alert for <strong>{selectedAlert.doctorName}</strong>. Please specify the resolution reason.
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Resolution Note *</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Doctor resumed duty / Approved leave verified"
+                      value={modalInput}
+                      onChange={(e) => setModalInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                  {modalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{modalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-resolve" disabled={modalSubmitting}>
+                    {modalSubmitting ? "Resolving..." : "Confirm Resolution"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeModal === "AUDIT_TRAIL" && (
+              <div>
+                <div className="modal-header">
+                  <h3>Alert History & Audit Trail</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <div style={{ marginBottom: "16px", padding: "12px", background: "#f1f5f9", borderRadius: "8px" }}>
+                    <h4 style={{ margin: "0 0 6px", color: "#183153" }}>{selectedAlert.doctorName}</h4>
+                    <p style={{ margin: "0", fontSize: "13px", color: "#475569" }}>
+                      Centre: <strong>{selectedAlert.healthCentre}</strong> • Streak: <strong>{selectedAlert.consecutiveDays} days</strong> • Status: <span className={`badge-${(selectedAlert.status || "ACTIVE").toLowerCase()}`}>{selectedAlert.status || "ACTIVE"}</span>
+                    </p>
+                  </div>
+
+                  <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Action Timeline</h4>
+                  <div className="audit-timeline">
+                    {(selectedAlert.actions && selectedAlert.actions.length > 0 ? selectedAlert.actions : [
+                      {
+                        action: "CREATED",
+                        performedBy: "system",
+                        role: "system",
+                        note: selectedAlert.message,
+                        timestamp: selectedAlert.createdAt,
+                      },
+                    ]).map((entry, idx) => (
+                      <div className="timeline-item" key={entry._id || idx}>
+                        <div className={`timeline-dot ${entry.action.toLowerCase()}`} />
+                        <div className="timeline-content">
+                          <div className="timeline-meta">
+                            <span className="timeline-action-tag">{entry.action}</span>
+                            <span>{new Date(entry.timestamp).toLocaleString("en-IN")}</span>
+                          </div>
+                          <p className="timeline-note">{entry.note || "-"}</p>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                            By: {entry.performedBy} ({entry.role})
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

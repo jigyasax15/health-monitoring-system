@@ -1,5 +1,42 @@
 const mongoose = require("mongoose");
 
+const actionSchema = new mongoose.Schema(
+  {
+    action: {
+      type: String,
+      enum: [
+        "CREATED",
+        "ACKNOWLEDGED",
+        "NOTE_ADDED",
+        "RESOLVED",
+        "ESCALATED",
+        "STREAK_UPDATED",
+      ],
+      required: true,
+    },
+    performedBy: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    role: {
+      type: String,
+      enum: ["system", "centre-admin", "ddhs", "doctor"],
+      default: "system",
+    },
+    note: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
 const alertSchema = new mongoose.Schema(
   {
     doctorId: {
@@ -34,7 +71,7 @@ const alertSchema = new mongoose.Schema(
     },
     severity: {
       type: String,
-      enum: ["medium", "high", "critical"],
+      enum: ["low", "medium", "high", "critical", "LOW", "MEDIUM", "HIGH", "CRITICAL"],
       required: true,
     },
     message: {
@@ -49,6 +86,11 @@ const alertSchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
+    status: {
+      type: String,
+      enum: ["ACTIVE", "ACKNOWLEDGED", "RESOLVED"],
+      default: "ACTIVE",
+    },
     resolved: {
       type: Boolean,
       default: false,
@@ -57,14 +99,53 @@ const alertSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    resolvedBy: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    resolutionNote: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    acknowledgedAt: {
+      type: Date,
+      default: null,
+    },
+    acknowledgedBy: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    latestActionNote: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    isEscalated: {
+      type: Boolean,
+      default: false,
+    },
+    escalatedAt: {
+      type: Date,
+      default: null,
+    },
+    actions: {
+      type: [actionSchema],
+      default: [],
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// Compound unique index to prevent duplicate alerts for the same doctor + date + type
-alertSchema.index({ doctorEmail: 1, date: 1, type: 1 }, { unique: true });
+// Indexes for high-performance role-scoped querying & filtering
+alertSchema.index({ healthCentre: 1, status: 1 });
+alertSchema.index({ doctorEmail: 1, status: 1 });
+alertSchema.index({ status: 1, severity: 1 });
+alertSchema.index({ createdAt: -1 });
 
 const Alert = mongoose.model("Alert", alertSchema);
 
