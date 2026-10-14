@@ -129,19 +129,28 @@ const getTodayAttendance = async (req, res) => {
       });
     }
 
+    const LeaveRequest = require("../models/LeaveRequest");
     const { getApplicableHolidays } = require("../utils/workingDays");
-    const [attendance, holidayList] = await Promise.all([
+    const [attendance, holidayList, approvedLeaves] = await Promise.all([
       Attendance.findOne({
         doctorEmail: email,
         date: today,
       }),
       getApplicableHolidays(today, today, doctor.healthCentre),
+      LeaveRequest.find({
+        doctorEmail: email,
+        status: "APPROVED",
+        startDate: { $lte: today },
+        endDate: { $gte: today },
+      }).lean(),
     ]);
 
     const derivedStatus = determineAttendanceStatus(attendance, {
       targetDate: today,
       healthCentre: doctor.healthCentre,
+      doctorEmail: doctor.email,
       holidayList,
+      approvedLeaves,
     });
 
     if (!attendance) {

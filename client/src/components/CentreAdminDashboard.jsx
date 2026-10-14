@@ -31,6 +31,31 @@ function CentreAdminDashboard({ user, onLogout }) {
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState("");
 
+  // Leave Requests & Approvals State
+  const [leaves, setLeaves] = useState([]);
+  const [leaveSummary, setLeaveSummary] = useState({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    cancelled: 0,
+    total: 0,
+    onLeaveToday: 0,
+  });
+  const [leavesPagination, setLeavesPagination] = useState({ page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+  const [leaveCurrentPage, setLeaveCurrentPage] = useState(1);
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState("");
+  const [leaveDoctorFilter, setLeaveDoctorFilter] = useState("");
+  const [leaveTypeFilter, setLeaveTypeFilter] = useState("");
+  const [leavesLoading, setLeavesLoading] = useState(true);
+  const [leavesError, setLeavesError] = useState("");
+
+  // Leave Action Modals State
+  const [activeLeaveModal, setActiveLeaveModal] = useState(null); // 'APPROVE' | 'REJECT' | 'LEAVE_AUDIT' | null
+  const [selectedLeave, setSelectedLeave] = useState(null);
+  const [leaveModalInput, setLeaveModalInput] = useState("");
+  const [leaveModalSubmitting, setLeaveModalSubmitting] = useState(false);
+  const [leaveModalError, setLeaveModalError] = useState("");
+
   // Period Report State
   const defaultStartDate = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const defaultEndDate = new Date().toISOString().slice(0, 10);
@@ -158,7 +183,62 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 3. Fetch Centre Period Report
+  // 3. Fetch Centre Leave Requests & Summary
+  const fetchLeaves = async (page = 1) => {
+    if (!assignedCentre) return;
+
+    try {
+      setLeavesLoading(true);
+      setLeavesError("");
+
+      // Fetch leave summary counts
+      const summaryRes = await fetch("http://localhost:5000/api/leaves/summary", {
+        credentials: "include",
+      });
+      if (summaryRes.status === 401) {
+        onLogout();
+        return;
+      }
+      const summaryData = await summaryRes.json();
+      if (summaryRes.ok && summaryData.summary) {
+        setLeaveSummary(summaryData.summary);
+      }
+
+      // Fetch filtered leave list
+      const params = new URLSearchParams();
+      params.set("page", page.toString());
+      params.set("limit", "10");
+      if (leaveStatusFilter) params.set("status", leaveStatusFilter);
+      if (leaveDoctorFilter) params.set("doctorEmail", leaveDoctorFilter);
+      if (leaveTypeFilter) params.set("leaveType", leaveTypeFilter);
+
+      const leaveRes = await fetch(
+        `http://localhost:5000/api/leaves/centre?${params.toString()}`,
+        { credentials: "include" }
+      );
+
+      if (leaveRes.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const leaveData = await leaveRes.json();
+      if (!leaveRes.ok) {
+        throw new Error(leaveData.message || "Failed to load leave requests");
+      }
+
+      setLeaves(leaveData.leaves || []);
+      setLeavesPagination(leaveData.pagination || { page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+      setLeaveCurrentPage(leaveData.pagination?.page || 1);
+    } catch (err) {
+      console.error("Fetch leaves error:", err);
+      setLeavesError(err.message || "Could not load leave requests");
+    } finally {
+      setLeavesLoading(false);
+    }
+  };
+
+  // 4. Fetch Centre Period Report
   const fetchPeriodReport = async () => {
     if (!assignedCentre) return;
 
@@ -195,7 +275,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 4. Fetch Centre Attendance History
+  // 5. Fetch Centre Attendance History
   const fetchHistory = async (page = 1) => {
     if (!assignedCentre) return;
 
@@ -238,7 +318,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 5. Fetch Holidays
+  // 6. Fetch Holidays
   const fetchHolidays = async () => {
     try {
       setHolidaysLoading(true);
@@ -262,7 +342,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 6. Create Centre Holiday
+  // 7. Create Centre Holiday
   const handleCreateHoliday = async (e) => {
     e.preventDefault();
     setHolidayMsg("");
@@ -308,7 +388,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // 7. Delete Centre Holiday
+  // 8. Delete Centre Holiday
   const handleDeleteHoliday = async (holidayId) => {
     if (!window.confirm("Are you sure you want to remove this centre holiday?")) {
       return;
@@ -335,7 +415,7 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
-  // Modal Handlers for Alert Actions
+  // Alert Modals Handlers
   const openModal = (type, alert) => {
     setSelectedAlert(alert);
     setActiveModal(type);
@@ -445,6 +525,86 @@ function CentreAdminDashboard({ user, onLogout }) {
     }
   };
 
+  // Leave Modals Handlers
+  const openLeaveModal = (type, leave) => {
+    setSelectedLeave(leave);
+    setActiveLeaveModal(type);
+    setLeaveModalInput("");
+    setLeaveModalError("");
+  };
+
+  const closeLeaveModal = () => {
+    setActiveLeaveModal(null);
+    setSelectedLeave(null);
+    setLeaveModalInput("");
+    setLeaveModalError("");
+  };
+
+  const handleApproveLeave = async (e) => {
+    e.preventDefault();
+    if (!selectedLeave) return;
+
+    try {
+      setLeaveModalSubmitting(true);
+      setLeaveModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/leaves/${selectedLeave._id}/approve`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reviewNote: leaveModalInput.trim() || "Approved by Centre Admin" }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to approve leave request");
+      }
+
+      closeLeaveModal();
+      fetchLeaves(leaveCurrentPage);
+      fetchTodayData();
+      fetchAlerts(alertCurrentPage);
+      fetchPeriodReport();
+    } catch (err) {
+      setLeaveModalError(err.message || "Could not approve leave request");
+    } finally {
+      setLeaveModalSubmitting(false);
+    }
+  };
+
+  const handleRejectLeave = async (e) => {
+    e.preventDefault();
+    if (!selectedLeave) return;
+    if (!leaveModalInput.trim()) {
+      setLeaveModalError("Review note is required when rejecting a leave request.");
+      return;
+    }
+
+    try {
+      setLeaveModalSubmitting(true);
+      setLeaveModalError("");
+
+      const res = await fetch(`http://localhost:5000/api/leaves/${selectedLeave._id}/reject`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reviewNote: leaveModalInput.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to reject leave request");
+      }
+
+      closeLeaveModal();
+      fetchLeaves(leaveCurrentPage);
+    } catch (err) {
+      setLeaveModalError(err.message || "Could not reject leave request");
+    } finally {
+      setLeaveModalSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     fetchTodayData();
     fetchHolidays();
@@ -453,6 +613,10 @@ function CentreAdminDashboard({ user, onLogout }) {
   useEffect(() => {
     fetchAlerts(1);
   }, [assignedCentre, alertStatusFilter, alertSeverityFilter, alertDoctorFilter, alertEscalatedFilter]);
+
+  useEffect(() => {
+    fetchLeaves(1);
+  }, [assignedCentre, leaveStatusFilter, leaveDoctorFilter, leaveTypeFilter]);
 
   useEffect(() => {
     fetchPeriodReport();
@@ -515,11 +679,194 @@ function CentreAdminDashboard({ user, onLogout }) {
                 <h2 className="stat-absent">{summary.absent}</h2>
               </div>
               <div className="stat-card">
+                <p>On Leave Today</p>
+                <h2 className="stat-on-leave">{summary.onLeave || 0}</h2>
+              </div>
+              <div className="stat-card">
                 <p>Not Marked / Off</p>
                 <h2 className="stat-pending">
                   {summary.nonWorking ? `${summary.nonWorking} (Off)` : summary.notMarked}
                 </h2>
               </div>
+            </div>
+
+            {/* Doctor Leave Requests & Approvals Section */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <div className="section-header-flex">
+                <div>
+                  <h2>Doctor Leave Requests & Approval Workflow</h2>
+                  <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                    Review, approve, or reject doctor leave applications. Approved leaves automatically update daily status to "On Leave", exclude dates from absenteeism streaks, and deduct working days from attendance percentage denominators.
+                  </p>
+                </div>
+              </div>
+
+              {/* Leave Summary Counters */}
+              <div className="stats-grid" style={{ marginTop: "18px" }}>
+                <div className="stat-card" style={{ borderLeft: "4px solid #f59e0b" }}>
+                  <p>Pending Review</p>
+                  <h2 style={{ color: "#d97706" }}>{leaveSummary.pending}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #16a34a" }}>
+                  <p>Approved Requests</p>
+                  <h2 style={{ color: "#16a34a" }}>{leaveSummary.approved}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #ef4444" }}>
+                  <p>Rejected Requests</p>
+                  <h2 style={{ color: "#b91c1c" }}>{leaveSummary.rejected}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #0284c7" }}>
+                  <p>Doctors On Leave Today</p>
+                  <h2 style={{ color: "#0284c7" }}>{leaveSummary.onLeaveToday}</h2>
+                </div>
+              </div>
+
+              {/* Leave Filters */}
+              <div className="filter-bar" style={{ marginTop: "20px" }}>
+                <div className="filter-group">
+                  <label>Status</label>
+                  <select
+                    value={leaveStatusFilter}
+                    onChange={(e) => setLeaveStatusFilter(e.target.value)}
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="PENDING">PENDING</option>
+                    <option value="APPROVED">APPROVED</option>
+                    <option value="REJECTED">REJECTED</option>
+                    <option value="CANCELLED">CANCELLED</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Doctor</label>
+                  <select
+                    value={leaveDoctorFilter}
+                    onChange={(e) => setLeaveDoctorFilter(e.target.value)}
+                  >
+                    <option value="">All Doctors</option>
+                    {summary.doctors.map((d) => (
+                      <option key={d.email} value={d.email}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Leave Type</label>
+                  <select
+                    value={leaveTypeFilter}
+                    onChange={(e) => setLeaveTypeFilter(e.target.value)}
+                  >
+                    <option value="">All Types</option>
+                    <option value="CASUAL">Casual (CL)</option>
+                    <option value="SICK">Sick (SL)</option>
+                    <option value="EARNED">Earned (EL)</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Leave Table */}
+              {leavesLoading && <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading leave requests...</p>}
+              {leavesError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{leavesError}</p>}
+
+              {!leavesLoading && !leavesError && leaves.length === 0 && (
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>No leave requests found matching criteria.</p>
+              )}
+
+              {!leavesLoading && !leavesError && leaves.length > 0 && (
+                <>
+                  <div className="table-wrapper" style={{ marginTop: "15px" }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Doctor</th>
+                          <th>Department</th>
+                          <th>Type</th>
+                          <th>Dates</th>
+                          <th>Working Days</th>
+                          <th>Reason</th>
+                          <th>Status</th>
+                          <th>Submitted On</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaves.map((l) => (
+                          <tr key={l._id}>
+                            <td>
+                              <strong>{l.doctorName}</strong>
+                              <div style={{ fontSize: "12px", color: "#64748b" }}>{l.doctorEmail}</div>
+                            </td>
+                            <td>{l.department}</td>
+                            <td><span className="holiday-badge">{l.leaveType}</span></td>
+                            <td><strong>{l.startDate}</strong> to <strong>{l.endDate}</strong></td>
+                            <td><span style={{ fontWeight: "600", color: "#0284c7" }}>{l.numberOfWorkingDays} days</span></td>
+                            <td style={{ maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.reason}>
+                              {l.reason}
+                            </td>
+                            <td>
+                              <span className={`status-badge ${l.status.toLowerCase()}`}>
+                                {l.status}
+                              </span>
+                            </td>
+                            <td>{new Date(l.submittedAt || l.createdAt).toLocaleDateString("en-IN")}</td>
+                            <td>
+                              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                                {l.status === "PENDING" ? (
+                                  <>
+                                    <button
+                                      className="alert-action-btn btn-ack"
+                                      onClick={() => openLeaveModal("APPROVE", l)}
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      className="alert-action-btn btn-resolve"
+                                      onClick={() => openLeaveModal("REJECT", l)}
+                                      style={{ background: "#fee2e2", color: "#991b1b", border: "1px solid #fecaca" }}
+                                    >
+                                      Reject
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    className="alert-action-btn btn-detail"
+                                    onClick={() => openLeaveModal("LEAVE_AUDIT", l)}
+                                  >
+                                    Details
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="pagination-bar">
+                    <span>
+                      Page {leavesPagination.page} of {leavesPagination.totalPages || 1} ({leavesPagination.totalItems} total requests)
+                    </span>
+                    <div className="pagination-buttons">
+                      <button
+                        disabled={leaveCurrentPage <= 1}
+                        onClick={() => fetchLeaves(leaveCurrentPage - 1)}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        disabled={leaveCurrentPage >= leavesPagination.totalPages}
+                        onClick={() => fetchLeaves(leaveCurrentPage + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Absenteeism Alert Management & Escalation Section */}
@@ -604,7 +951,7 @@ function CentreAdminDashboard({ user, onLogout }) {
                   >
                     <option value="">All Alerts</option>
                     <option value="true">Escalated Only</option>
-                    <option value="false">Non-Escalated</option>
+                    <option value="false">Not Escalated</option>
                   </select>
                 </div>
               </div>
@@ -614,9 +961,7 @@ function CentreAdminDashboard({ user, onLogout }) {
               {alertsError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{alertsError}</p>}
 
               {!alertsLoading && !alertsError && alerts.length === 0 && (
-                <p style={{ color: "#6b7280", marginTop: "15px" }}>
-                  No absenteeism alerts found matching selected criteria.
-                </p>
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>No alerts matching the selected criteria.</p>
               )}
 
               {!alertsLoading && !alertsError && alerts.length > 0 && (
@@ -626,11 +971,12 @@ function CentreAdminDashboard({ user, onLogout }) {
                       <thead>
                         <tr>
                           <th>Doctor</th>
-                          <th>Consecutive Absence</th>
+                          <th>Centre</th>
+                          <th>Consecutive Missed</th>
                           <th>Severity</th>
                           <th>Status</th>
+                          <th>Trigger Date</th>
                           <th>Escalation</th>
-                          <th>Last Activity / Note</th>
                           <th>Actions</th>
                         </tr>
                       </thead>
@@ -638,19 +984,31 @@ function CentreAdminDashboard({ user, onLogout }) {
                         {alerts.map((alert) => {
                           const isResolved = alert.status === "RESOLVED" || alert.resolved;
                           const isAck = alert.status === "ACKNOWLEDGED";
+
                           return (
-                            <tr key={alert._id || alert.id}>
+                            <tr
+                              key={alert._id || alert.id}
+                              className={
+                                alert.isEscalated
+                                  ? "row-escalated"
+                                  : alert.severity === "critical"
+                                  ? "row-critical"
+                                  : ""
+                              }
+                            >
                               <td>
                                 <strong>{alert.doctorName}</strong>
-                                <br />
-                                <span style={{ fontSize: "12px", color: "#64748b" }}>{alert.doctorEmail}</span>
+                                <div style={{ fontSize: "12px", color: "#64748b" }}>{alert.doctorEmail}</div>
+                              </td>
+                              <td>{alert.healthCentre}</td>
+                              <td>
+                                <strong style={{ color: alert.consecutiveDays >= 3 ? "#b91c1c" : alert.consecutiveDays === 2 ? "#c2410c" : "#1e293b" }}>
+                                  {alert.consecutiveDays} working {alert.consecutiveDays === 1 ? "day" : "days"}
+                                </strong>
                               </td>
                               <td>
-                                <strong>{alert.consecutiveDays}</strong> {alert.consecutiveDays === 1 ? "working day" : "working days"}
-                              </td>
-                              <td>
-                                <span className={`badge-${alert.severity?.toLowerCase() || "medium"}`}>
-                                  {alert.severity}
+                                <span className={`severity-badge ${(alert.severity || "medium").toLowerCase()}`}>
+                                  {alert.severity?.toUpperCase()}
                                 </span>
                               </td>
                               <td>
@@ -658,17 +1016,13 @@ function CentreAdminDashboard({ user, onLogout }) {
                                   {alert.status || "ACTIVE"}
                                 </span>
                               </td>
+                              <td>{alert.date}</td>
                               <td>
                                 {alert.isEscalated ? (
-                                  <span className="badge-escalated">⚠️ ESCALATED</span>
+                                  <span className="badge-escalated">ESCALATED</span>
                                 ) : (
-                                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>Normal</span>
+                                  <span style={{ color: "#64748b", fontSize: "12px" }}>Normal</span>
                                 )}
-                              </td>
-                              <td>
-                                <span style={{ fontSize: "12px", color: "#334155" }}>
-                                  {alert.latestActionNote || alert.resolutionNote || alert.message}
-                                </span>
                               </td>
                               <td>
                                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
@@ -680,22 +1034,24 @@ function CentreAdminDashboard({ user, onLogout }) {
                                       Acknowledge
                                     </button>
                                   )}
+
                                   {!isResolved && (
-                                    <button
-                                      className="alert-action-btn btn-note"
-                                      onClick={() => openModal("ADD_NOTE", alert)}
-                                    >
-                                      + Note
-                                    </button>
+                                    <>
+                                      <button
+                                        className="alert-action-btn btn-note"
+                                        onClick={() => openModal("ADD_NOTE", alert)}
+                                      >
+                                        Add Note
+                                      </button>
+                                      <button
+                                        className="alert-action-btn btn-resolve"
+                                        onClick={() => openModal("RESOLVE", alert)}
+                                      >
+                                        Resolve
+                                      </button>
+                                    </>
                                   )}
-                                  {!isResolved && (
-                                    <button
-                                      className="alert-action-btn btn-resolve"
-                                      onClick={() => openModal("RESOLVE", alert)}
-                                    >
-                                      Resolve
-                                    </button>
-                                  )}
+
                                   <button
                                     className="alert-action-btn btn-detail"
                                     onClick={() => openModal("AUDIT_TRAIL", alert)}
@@ -778,7 +1134,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             <div className="table-card" style={{ marginTop: "30px" }}>
               <h2>Attendance Reports & Analytics</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
-                Comprehensive attendance aggregation for {summary.healthCentre} (excludes non-working days from percentage denominator)
+                Comprehensive attendance aggregation for {summary.healthCentre} (approved leave days are excused and deducted from required percentage denominator)
               </p>
 
               {/* Date Filters */}
@@ -821,6 +1177,10 @@ function CentreAdminDashboard({ user, onLogout }) {
                       <h2 className="stat-absent">{reportData.absent}</h2>
                     </div>
                     <div className="stat-card">
+                      <p>Total Approved Leave Days</p>
+                      <h2 className="stat-on-leave">{reportData.onLeave || 0}</h2>
+                    </div>
+                    <div className="stat-card">
                       <p>Working-Day Attendance %</p>
                       <h2 className="stat-present">{reportData.attendancePercentage}%</h2>
                     </div>
@@ -839,6 +1199,7 @@ function CentreAdminDashboard({ user, onLogout }) {
                             <th>Department</th>
                             <th>Present (Work)</th>
                             <th>Absent</th>
+                            <th>On Leave</th>
                             <th>Non-Working</th>
                             <th>Attendance %</th>
                           </tr>
@@ -848,82 +1209,41 @@ function CentreAdminDashboard({ user, onLogout }) {
                             <tr key={doc.id || doc.email}>
                               <td><strong>{doc.name}</strong></td>
                               <td>{doc.department}</td>
-                              <td className="table-present">{doc.presentWorkingDays !== undefined ? doc.presentWorkingDays : doc.presentDays}</td>
-                              <td className="table-absent">{doc.absentDays}</td>
-                              <td>{doc.nonWorkingDays || 0}</td>
-                              <td>
-                                <strong>{doc.attendancePercentage}%</strong>
-                              </td>
+                              <td><span className="stat-present">{doc.presentWorkingDays !== undefined ? doc.presentWorkingDays : doc.presentDays}</span></td>
+                              <td><span className={doc.absentDays > 0 ? "stat-absent" : ""}>{doc.absentDays}</span></td>
+                              <td><span className="stat-on-leave">{doc.onLeaveDays || 0}</span></td>
+                              <td>{doc.nonWorkingDays}</td>
+                              <td><strong>{doc.attendancePercentage}%</strong></td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
                   )}
-
-                  {/* Department Summary */}
-                  {reportData.departmentSummary && reportData.departmentSummary.length > 0 && (
-                    <>
-                      <h3 style={{ marginTop: "25px", color: "#183153" }}>Department Summary</h3>
-                      <div className="table-wrapper">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Department</th>
-                              <th>Doctors</th>
-                              <th>Present (Work)</th>
-                              <th>Absent</th>
-                              <th>Attendance %</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reportData.departmentSummary.map((dept) => (
-                              <tr key={dept.department}>
-                                <td><strong>{dept.department}</strong></td>
-                                <td>{dept.totalDoctors}</td>
-                                <td className="table-present">{dept.presentWorkingDays !== undefined ? dept.presentWorkingDays : dept.presentDays}</td>
-                                <td className="table-absent">{dept.absentDays}</td>
-                                <td><strong>{dept.attendancePercentage}%</strong></td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </>
-                  )}
                 </>
               )}
             </div>
 
-            {/* Centre Holiday & Working-Day Management Section */}
+            {/* Holiday Management Section */}
             <div className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
-                  <h2>Health Centre Holidays & Off-Days</h2>
+                  <h2>Health Centre & District Holiday Calendar</h2>
                   <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
-                    Manage centre-specific local holidays and view district-wide public holidays
+                    Configure local holidays and observe district-wide public non-working days.
                   </p>
                 </div>
               </div>
 
-              {/* Add Centre Holiday Form */}
-              <form
-                onSubmit={handleCreateHoliday}
-                style={{
-                  marginTop: "20px",
-                  padding: "16px",
-                  background: "#f8fafc",
-                  borderRadius: "10px",
-                  border: "1px solid #e2e8f0",
-                }}
-              >
-                <h4 style={{ margin: "0 0 12px", color: "#183153" }}>Add Centre-Specific Holiday</h4>
-                <div className="filter-bar" style={{ margin: 0, padding: 0, background: "none", border: "none" }}>
+              {/* Add Holiday Form */}
+              <form onSubmit={handleCreateHoliday} style={{ marginTop: "20px", background: "#f8fafc", padding: "18px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <h3 style={{ fontSize: "16px", marginBottom: "12px", color: "#1e293b" }}>Add Centre-Specific Holiday</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "15px" }}>
                   <div className="filter-group">
                     <label>Holiday Name *</label>
                     <input
                       type="text"
-                      placeholder="e.g. Centre Maintenance Day"
+                      placeholder="e.g. Local Fair / Maintenance Day"
                       value={holidayForm.name}
                       onChange={(e) => setHolidayForm({ ...holidayForm, name: e.target.value })}
                       required
@@ -946,40 +1266,41 @@ function CentreAdminDashboard({ user, onLogout }) {
                       value={holidayForm.type}
                       onChange={(e) => setHolidayForm({ ...holidayForm, type: e.target.value })}
                     >
-                      <option value="LOCAL">LOCAL</option>
-                      <option value="SPECIAL">SPECIAL</option>
-                      <option value="PUBLIC">PUBLIC</option>
-                      <option value="STATE">STATE</option>
+                      <option value="LOCAL">Local / PHC Specific</option>
+                      <option value="SPECIAL">Special Event</option>
+                      <option value="PUBLIC">Public</option>
                     </select>
                   </div>
+                </div>
 
-                  <div className="filter-group">
-                    <label>Description (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="Optional notes"
-                      value={holidayForm.description}
-                      onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
-                    />
-                  </div>
+                <div className="filter-group" style={{ marginTop: "12px" }}>
+                  <label>Description / Note</label>
+                  <input
+                    type="text"
+                    placeholder="Optional details..."
+                    value={holidayForm.description}
+                    onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
+                  />
+                </div>
 
+                <div style={{ marginTop: "15px", display: "flex", alignItems: "center", gap: "15px" }}>
                   <button
                     type="submit"
                     className="attendance-btn"
-                    style={{ marginTop: 0, height: "42px", alignSelf: "flex-end" }}
+                    style={{ width: "auto", padding: "10px 24px", marginTop: 0 }}
                     disabled={holidaySubmitting}
                   >
-                    {holidaySubmitting ? "Adding..." : "+ Add Holiday"}
+                    {holidaySubmitting ? "Adding..." : "Add Centre Holiday"}
                   </button>
-                </div>
 
-                {holidayMsg && <p style={{ color: "#16a34a", margin: "10px 0 0", fontSize: "14px" }}>{holidayMsg}</p>}
-                {holidayErr && <p style={{ color: "#dc2626", margin: "10px 0 0", fontSize: "14px" }}>{holidayErr}</p>}
+                  {holidayMsg && <span style={{ color: "#16a34a", fontWeight: "500", fontSize: "14px" }}>{holidayMsg}</span>}
+                  {holidayErr && <span style={{ color: "#dc2626", fontWeight: "500", fontSize: "14px" }}>{holidayErr}</span>}
+                </div>
               </form>
 
-              {/* Holiday List Table */}
-              <div style={{ marginTop: "20px" }}>
-                <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Applicable Holidays</h4>
+              {/* Holidays Table */}
+              <div style={{ marginTop: "25px" }}>
+                <h3 style={{ fontSize: "16px", color: "#1e293b", marginBottom: "10px" }}>Active Holidays List</h3>
                 {holidaysLoading ? (
                   <p style={{ color: "#6b7280" }}>Loading holidays...</p>
                 ) : holidays.length === 0 ? (
@@ -998,43 +1319,39 @@ function CentreAdminDashboard({ user, onLogout }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {holidays.map((h) => {
-                          const isCentreOwned = h.scope === "CENTRE" && h.healthCentre === assignedCentre;
-                          return (
-                            <tr key={h._id || `${h.date}_${h.name}`}>
-                              <td><strong>{h.date}</strong></td>
-                              <td>{h.name}</td>
-                              <td><span className="holiday-badge">{h.type || "PUBLIC"}</span></td>
-                              <td>
-                                <span className="scope-badge">
-                                  {h.scope === "CENTRE" ? `Centre (${h.healthCentre})` : "District-wide"}
-                                </span>
-                              </td>
-                              <td>{h.description || "-"}</td>
-                              <td>
-                                {isCentreOwned ? (
-                                  <button
-                                    onClick={() => handleDeleteHoliday(h._id)}
-                                    style={{
-                                      background: "#fee2e2",
-                                      color: "#991b1b",
-                                      border: "1px solid #fca5a5",
-                                      padding: "4px 10px",
-                                      borderRadius: "6px",
-                                      fontSize: "12px",
-                                      fontWeight: 600,
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                ) : (
-                                  <span style={{ color: "#9ca3af", fontSize: "12px" }}>District Policy</span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
+                        {holidays.map((h) => (
+                          <tr key={h._id || `${h.date}_${h.name}`}>
+                            <td><strong>{h.date}</strong></td>
+                            <td>{h.name}</td>
+                            <td><span className="holiday-badge">{h.type || "PUBLIC"}</span></td>
+                            <td>
+                              <span className="scope-badge">
+                                {h.scope === "CENTRE" ? `Centre (${h.healthCentre})` : "District-wide"}
+                              </span>
+                            </td>
+                            <td>{h.description || "-"}</td>
+                            <td>
+                              {h.scope === "CENTRE" && h.healthCentre === assignedCentre ? (
+                                <button
+                                  onClick={() => handleDeleteHoliday(h._id)}
+                                  style={{
+                                    padding: "4px 8px",
+                                    background: "#fee2e2",
+                                    color: "#991b1b",
+                                    border: "1px solid #fecaca",
+                                    borderRadius: "4px",
+                                    cursor: "pointer",
+                                    fontSize: "12px",
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              ) : (
+                                <span style={{ color: "#94a3b8", fontSize: "12px" }}>District (Read-only)</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -1042,11 +1359,11 @@ function CentreAdminDashboard({ user, onLogout }) {
               </div>
             </div>
 
-            {/* Detailed Attendance History Log */}
+            {/* Historical Attendance Log */}
             <div className="table-card" style={{ marginTop: "30px" }}>
-              <h2>Detailed Attendance Log</h2>
+              <h2>Attendance History Log</h2>
 
-              {/* Filter controls */}
+              {/* Filters */}
               <div className="filter-bar">
                 <div className="filter-group">
                   <label>Doctor</label>
@@ -1057,7 +1374,7 @@ function CentreAdminDashboard({ user, onLogout }) {
                     <option value="">All Doctors</option>
                     {summary.doctors.map((d) => (
                       <option key={d.email} value={d.email}>
-                        {d.name} ({d.department})
+                        {d.name}
                       </option>
                     ))}
                   </select>
@@ -1087,28 +1404,24 @@ function CentreAdminDashboard({ user, onLogout }) {
                     <option value="">All Statuses</option>
                     <option value="Present">Present</option>
                     <option value="Absent">Absent</option>
+                    <option value="On Leave">On Leave</option>
                     <option value="Non-Working Day">Non-Working Day</option>
                     <option value="Not Marked">Not Marked</option>
                   </select>
                 </div>
               </div>
 
-              {historyLoading && (
-                <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading logs...</p>
-              )}
-              {historyError && (
-                <p style={{ color: "#dc2626", marginTop: "15px" }}>{historyError}</p>
-              )}
+              {/* History Table */}
+              {historyLoading && <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading logs...</p>}
+              {historyError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{historyError}</p>}
 
               {!historyLoading && !historyError && historyItems.length === 0 && (
-                <p style={{ color: "#6b7280", marginTop: "15px" }}>
-                  No attendance records found for the selected filters.
-                </p>
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>No attendance logs found.</p>
               )}
 
               {!historyLoading && !historyError && historyItems.length > 0 && (
                 <>
-                  <div className="table-wrapper">
+                  <div className="table-wrapper" style={{ marginTop: "15px" }}>
                     <table>
                       <thead>
                         <tr>
@@ -1116,27 +1429,23 @@ function CentreAdminDashboard({ user, onLogout }) {
                           <th>Doctor</th>
                           <th>Department</th>
                           <th>Status</th>
-                          <th>Marked Time</th>
+                          <th>Marked At</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {historyItems.map((item) => (
-                          <tr key={item.id || `${item.doctorEmail}_${item.date}`}>
-                            <td><strong>{item.date}</strong></td>
-                            <td>{item.doctorName}</td>
-                            <td>{item.department}</td>
+                        {historyItems.map((rec) => (
+                          <tr key={rec.id || `${rec.doctorId}_${rec.date}`}>
+                            <td><strong>{rec.date}</strong></td>
+                            <td>{rec.doctorName}</td>
+                            <td>{rec.department}</td>
                             <td>
-                              <span
-                                className={`status-badge ${item.status
-                                  .toLowerCase()
-                                  .replace(/\s+/g, "-")}`}
-                              >
-                                {item.status}
+                              <span className={`status-badge ${rec.status.toLowerCase().replace(/\s+/g, "-")}`}>
+                                {rec.status}
                               </span>
                             </td>
                             <td>
-                              {item.markedAt
-                                ? new Date(item.markedAt).toLocaleTimeString("en-IN", {
+                              {rec.markedAt
+                                ? new Date(rec.markedAt).toLocaleTimeString("en-IN", {
                                     hour: "2-digit",
                                     minute: "2-digit",
                                   })
@@ -1174,7 +1483,7 @@ function CentreAdminDashboard({ user, onLogout }) {
         )}
       </main>
 
-      {/* Action Modals */}
+      {/* Alert Action Modals */}
       {activeModal && selectedAlert && (
         <div className="modal-backdrop" onClick={closeModal}>
           <div className="modal-container" onClick={(e) => e.stopPropagation()}>
@@ -1326,6 +1635,145 @@ function CentreAdminDashboard({ user, onLogout }) {
                 </div>
                 <div className="modal-footer">
                   <button type="button" className="alert-action-btn btn-detail" onClick={closeModal}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Leave Action Modals */}
+      {activeLeaveModal && selectedLeave && (
+        <div className="modal-backdrop" onClick={closeLeaveModal}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            {activeLeaveModal === "APPROVE" && (
+              <form onSubmit={handleApproveLeave}>
+                <div className="modal-header">
+                  <h3>Approve Leave Request</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeLeaveModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Approve <strong>{selectedLeave.leaveType}</strong> leave for <strong>{selectedLeave.doctorName}</strong> ({selectedLeave.numberOfWorkingDays} working days: {selectedLeave.startDate} to {selectedLeave.endDate}).
+                  </p>
+                  <p style={{ marginTop: "6px", color: "#475569", fontSize: "13px" }}>
+                    Reason: <em>"{selectedLeave.reason}"</em>
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Review Note (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Leave approved as per quota"
+                      value={leaveModalInput}
+                      onChange={(e) => setLeaveModalInput(e.target.value)}
+                    />
+                  </div>
+                  {leaveModalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{leaveModalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeLeaveModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-ack" disabled={leaveModalSubmitting}>
+                    {leaveModalSubmitting ? "Approving..." : "Confirm Approval"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeLeaveModal === "REJECT" && (
+              <form onSubmit={handleRejectLeave}>
+                <div className="modal-header">
+                  <h3>Reject Leave Request</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeLeaveModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <p>
+                    Reject leave request for <strong>{selectedLeave.doctorName}</strong> ({selectedLeave.startDate} to {selectedLeave.endDate}).
+                  </p>
+                  <div className="filter-group" style={{ marginTop: "12px" }}>
+                    <label>Rejection Reason / Review Note * (Required)</label>
+                    <textarea
+                      rows={3}
+                      style={{
+                        padding: "10px",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "6px",
+                        fontFamily: "inherit",
+                        fontSize: "14px",
+                      }}
+                      placeholder="e.g. High patient influx on these dates / Emergency roster shortage"
+                      value={leaveModalInput}
+                      onChange={(e) => setLeaveModalInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                  {leaveModalError && <p style={{ color: "#dc2626", marginTop: "10px" }}>{leaveModalError}</p>}
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeLeaveModal}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="alert-action-btn btn-resolve" style={{ background: "#dc2626" }} disabled={leaveModalSubmitting}>
+                    {leaveModalSubmitting ? "Rejecting..." : "Confirm Rejection"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {activeLeaveModal === "LEAVE_AUDIT" && (
+              <div>
+                <div className="modal-header">
+                  <h3>Leave Request Details & History</h3>
+                  <button type="button" className="modal-close-btn" onClick={closeLeaveModal}>×</button>
+                </div>
+                <div className="modal-body">
+                  <div style={{ marginBottom: "16px", padding: "12px", background: "#f1f5f9", borderRadius: "8px" }}>
+                    <h4 style={{ margin: "0 0 6px", color: "#183153" }}>{selectedLeave.doctorName} ({selectedLeave.leaveType})</h4>
+                    <p style={{ margin: "0", fontSize: "13px", color: "#475569" }}>
+                      Dates: <strong>{selectedLeave.startDate} to {selectedLeave.endDate}</strong> • Working Days: <strong>{selectedLeave.numberOfWorkingDays} days</strong> • Status: <span className={`status-badge ${selectedLeave.status.toLowerCase()}`}>{selectedLeave.status}</span>
+                    </p>
+                    <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#334155" }}>
+                      Reason: <em>"{selectedLeave.reason}"</em>
+                    </p>
+                    {selectedLeave.reviewNote && (
+                      <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#0369a1" }}>
+                        Review Note: <strong>{selectedLeave.reviewNote}</strong> (by {selectedLeave.reviewedBy || "Admin"})
+                      </p>
+                    )}
+                  </div>
+
+                  <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Action Timeline</h4>
+                  <div className="audit-timeline">
+                    {(selectedLeave.actions && selectedLeave.actions.length > 0 ? selectedLeave.actions : [
+                      {
+                        action: "SUBMITTED",
+                        performedBy: selectedLeave.doctorEmail,
+                        role: "doctor",
+                        note: selectedLeave.reason,
+                        timestamp: selectedLeave.submittedAt || selectedLeave.createdAt,
+                      },
+                    ]).map((entry, idx) => (
+                      <div className="timeline-item" key={entry._id || idx}>
+                        <div className={`timeline-dot ${entry.action.toLowerCase()}`} />
+                        <div className="timeline-content">
+                          <div className="timeline-meta">
+                            <span className="timeline-action-tag">{entry.action}</span>
+                            <span>{new Date(entry.timestamp).toLocaleString("en-IN")}</span>
+                          </div>
+                          <p className="timeline-note">{entry.note || "-"}</p>
+                          <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                            By: {entry.performedBy} ({entry.role})
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="alert-action-btn btn-detail" onClick={closeLeaveModal}>
                     Close
                   </button>
                 </div>

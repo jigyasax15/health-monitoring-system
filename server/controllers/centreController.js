@@ -1,9 +1,11 @@
 const Doctor = require("../models/Doctor");
 const Attendance = require("../models/Attendance");
 const HealthCentre = require("../models/HealthCentre");
+const LeaveRequest = require("../models/LeaveRequest");
 const { getTodayDateString } = require("../utils/dateTime");
 const { determineAttendanceStatus } = require("../utils/attendanceStatus");
 const { getApplicableHolidays } = require("../utils/workingDays");
+const { buildApprovedLeavesMap } = require("../services/leaveService");
 
 // Get daily attendance summary for a specific health centre
 const getPhcSummary = async (req, res) => {
@@ -52,14 +54,22 @@ const getPhcSummary = async (req, res) => {
 
     const today = getTodayDateString();
 
-    const [doctors, attendanceRecords, holidayList] = await Promise.all([
+    const [doctors, attendanceRecords, holidayList, approvedLeaves] = await Promise.all([
       Doctor.find({ healthCentre: healthCentreDoc.name }),
       Attendance.find({
         healthCentre: healthCentreDoc.name,
         date: today,
       }),
       getApplicableHolidays(today, today, healthCentreDoc.name),
+      LeaveRequest.find({
+        healthCentre: healthCentreDoc.name,
+        status: "APPROVED",
+        startDate: { $lte: today },
+        endDate: { $gte: today },
+      }).lean(),
     ]);
+
+    const approvedLeavesMap = buildApprovedLeavesMap(approvedLeaves);
 
     const doctorData = doctors.map((doctor) => {
       const attendance = attendanceRecords.find(
@@ -69,7 +79,10 @@ const getPhcSummary = async (req, res) => {
       const status = determineAttendanceStatus(attendance, {
         targetDate: today,
         healthCentre: doctor.healthCentre,
+        doctorEmail: doctor.email,
         holidayList,
+        approvedLeavesMap,
+        approvedLeaves,
       });
 
       return {
@@ -90,6 +103,10 @@ const getPhcSummary = async (req, res) => {
       (doctor) => doctor.status === "Absent"
     ).length;
 
+    const onLeave = doctorData.filter(
+      (doctor) => doctor.status === "On Leave"
+    ).length;
+
     const notMarked = doctorData.filter(
       (doctor) => doctor.status === "Not Marked"
     ).length;
@@ -105,6 +122,7 @@ const getPhcSummary = async (req, res) => {
       totalDoctors: doctorData.length,
       present,
       absent,
+      onLeave,
       notMarked,
       nonWorking,
       doctors: doctorData,

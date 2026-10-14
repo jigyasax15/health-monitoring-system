@@ -2,6 +2,7 @@ const Alert = require("../models/Alert");
 const Doctor = require("../models/Doctor");
 const Attendance = require("../models/Attendance");
 const HealthCentre = require("../models/HealthCentre");
+const LeaveRequest = require("../models/LeaveRequest");
 const alertConfig = require("../config/alertConfig");
 const {
   getTodayDateString,
@@ -21,24 +22,29 @@ const SEVERITY_WEIGHT = alertConfig.severityWeight || {
  * Calculates consecutive absence streak for a doctor ending on today's date.
  *
  * Rules:
- * - If today is not Absent (e.g. Present, Not Marked before cutoff, or Non-Working Day), return 0.
+ * - If today is not Absent (e.g. Present, On Leave, Not Marked before cutoff, or Non-Working Day), return 0.
  * - If today is Absent, start streak with 1 missed working day.
  * - When scanning backwards:
  *   * Non-working day (weekend or holiday) -> skip and continue streak without incrementing missed working days.
  *   * Working day + Absent -> increment streak (consecutiveDays++).
- *   * Working day + Present -> break streak.
- *   * Working day + Not Marked -> break streak.
+ *   * Working day + On Leave -> BREAKS the consecutive unexcused absence streak.
+ *   * Working day + Present -> BREAKS the streak.
+ *   * Working day + Not Marked -> BREAKS the streak.
  *
  * @param {Object} doctor
  * @param {Array} attendanceRecords - Attendance records for this doctor
  * @param {Object} [options={}]
  * @param {Array<Object>} [options.holidayList=[]]
+ * @param {Array<Object>} [options.approvedLeaves=[]]
+ * @param {Map} [options.approvedLeavesMap]
  * @returns {number} Number of consecutive missed working days
  */
 function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
   const referenceDate = options.referenceDate || new Date();
   const todayStr = getTodayDateString(referenceDate);
   const holidayList = options.holidayList || [];
+  const approvedLeaves = options.approvedLeaves || options.approvedLeaveList || [];
+  const approvedLeavesMap = options.approvedLeavesMap || null;
 
   // Check today's status first
   const todayRecord = attendanceRecords.find(
@@ -48,10 +54,13 @@ function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
     targetDate: todayStr,
     referenceDate,
     healthCentre: doctor.healthCentre,
+    doctorEmail: doctor.email,
     holidayList,
+    approvedLeaves,
+    approvedLeavesMap,
   });
 
-  // If today is not Absent (Present, Not Marked before cutoff, or Non-Working Day), no active streak ending today
+  // If today is not Absent (Present, On Leave, Not Marked before cutoff, or Non-Working Day), no active streak ending today
   if (todayStatus !== "Absent") {
     return 0;
   }
@@ -68,7 +77,10 @@ function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
       targetDate: pastDateStr,
       referenceDate,
       healthCentre: doctor.healthCentre,
+      doctorEmail: doctor.email,
       holidayList,
+      approvedLeaves,
+      approvedLeavesMap,
     });
 
     if (pastStatus === "Non-Working Day") {
@@ -78,7 +90,7 @@ function calculateConsecutiveAbsences(doctor, attendanceRecords, options = {}) {
       // Missed working day
       consecutiveDays++;
     } else {
-      // Present or Not Marked on a working day breaks the consecutive absence streak
+      // Present, On Leave, or Not Marked on a working day breaks the consecutive absence streak
       break;
     }
   }
@@ -132,13 +144,19 @@ async function generateAndGetActiveAlerts(filter = {}, options = {}) {
 
   const doctorEmails = doctors.map((d) => d.email);
 
-  // 3. Batch query attendance records and applicable holidays in the 30-day window
-  const [attendanceRecords, holidayList] = await Promise.all([
+  // 3. Batch query attendance records, holidays, and approved leaves in the 30-day window
+  const [attendanceRecords, holidayList, approvedLeaves] = await Promise.all([
     Attendance.find({
       doctorEmail: { $in: doctorEmails },
       date: { $gte: startDate, $lte: todayStr },
     }),
     getApplicableHolidays(startDate, todayStr, filter.centreName || null),
+    LeaveRequest.find({
+      doctorEmail: { $in: doctorEmails },
+      status: "APPROVED",
+      startDate: { $lte: todayStr },
+      endDate: { $gte: startDate },
+    }).lean(),
   ]);
 
   // 4. Evaluate each doctor
@@ -146,11 +164,14 @@ async function generateAndGetActiveAlerts(filter = {}, options = {}) {
     const docRecords = attendanceRecords.filter(
       (r) => r.doctorEmail === doctor.email
     );
+    const docLeaves = approvedLeaves.filter(
+      (l) => l.doctorEmail === doctor.email
+    );
 
     const consecutiveDays = calculateConsecutiveAbsences(
       doctor,
       docRecords,
-      { ...options, holidayList }
+      { ...options, holidayList, approvedLeaves: docLeaves }
     );
 
     if (consecutiveDays > 0) {
@@ -271,6 +292,105 @@ async function generateAndGetActiveAlerts(filter = {}, options = {}) {
   });
 
   return activeAlerts;
+}
+
+/**
+ * Reconciles active alerts for a doctor after a retroactive leave approval.
+ * Non-destructive: preserves all historical alerts and appends SYSTEM audit actions.
+ *
+ * @param {string} doctorEmail
+ * @param {string} healthCentre
+ * @param {Object} [options={}]
+ * @returns {Promise<Array<Object>>} Reconciled alerts
+ */
+async function reconcileAlertsForDoctor(doctorEmail, healthCentre, options = {}) {
+  const referenceDate = options.referenceDate || new Date();
+  const todayStr = getTodayDateString(referenceDate);
+  const startDate = getPreviousDateString(30, referenceDate);
+
+  const activeAlerts = await Alert.find({
+    doctorEmail: doctorEmail.toLowerCase().trim(),
+    status: { $in: ["ACTIVE", "ACKNOWLEDGED"] },
+    resolved: false,
+  });
+
+  if (activeAlerts.length === 0) {
+    return [];
+  }
+
+  const doctor = await Doctor.findOne({ email: doctorEmail.toLowerCase().trim() }).lean();
+  if (!doctor) return [];
+
+  const [attendanceRecords, holidayList, approvedLeaves] = await Promise.all([
+    Attendance.find({
+      doctorEmail: doctor.email,
+      date: { $gte: startDate, $lte: todayStr },
+    }),
+    getApplicableHolidays(startDate, todayStr, healthCentre || doctor.healthCentre),
+    LeaveRequest.find({
+      doctorEmail: doctor.email,
+      status: "APPROVED",
+      startDate: { $lte: todayStr },
+      endDate: { $gte: startDate },
+    }).lean(),
+  ]);
+
+  const newStreak = calculateConsecutiveAbsences(
+    doctor,
+    attendanceRecords,
+    { referenceDate, holidayList, approvedLeaves }
+  );
+
+  const updatedAlerts = [];
+
+  for (const alert of activeAlerts) {
+    if (newStreak === 0) {
+      // Resolve the alert automatically due to retroactive leave approval
+      alert.status = "RESOLVED";
+      alert.resolved = true;
+      alert.resolvedAt = referenceDate;
+      alert.resolvedBy = "system";
+      alert.resolutionNote = "Automatically resolved: Retroactive leave approved by Centre Admin";
+      alert.latestActionNote = alert.resolutionNote;
+      alert.actions.push({
+        action: "RESOLVED",
+        performedBy: "system",
+        role: "system",
+        note: "Automatically resolved: Retroactive leave approved by Centre Admin",
+        timestamp: referenceDate,
+      });
+      await alert.save();
+      updatedAlerts.push(alert);
+    } else if (newStreak < alert.consecutiveDays) {
+      // Update streak and adjust severity safely
+      alert.consecutiveDays = newStreak;
+      if (newStreak === 1) {
+        alert.type = "ABSENT_TODAY";
+        alert.severity = "medium";
+        alert.message = "Absent today";
+      } else if (newStreak === 2) {
+        alert.type = "CONSECUTIVE_ABSENCE_2_DAYS";
+        alert.severity = "high";
+        alert.message = "Absent for 2 consecutive days";
+      } else {
+        alert.type = "CONSECUTIVE_ABSENCE_3_PLUS_DAYS";
+        alert.severity = "critical";
+        message = `Absent for ${newStreak} consecutive days`;
+      }
+
+      alert.actions.push({
+        action: "STREAK_UPDATED",
+        performedBy: "system",
+        role: "system",
+        note: `Consecutive absence streak recalculated to ${newStreak} missed working days following leave approval`,
+        timestamp: referenceDate,
+      });
+      await alert.save();
+      updatedAlerts.push(alert);
+    }
+  }
+
+  return updatedAlerts;
 }
 
 /**
@@ -464,6 +584,7 @@ async function getAlertsSummary(filter = {}) {
 module.exports = {
   calculateConsecutiveAbsences,
   generateAndGetActiveAlerts,
+  reconcileAlertsForDoctor,
   acknowledgeAlert,
   addAlertNote,
   resolveAlert,

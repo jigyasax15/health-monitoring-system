@@ -335,8 +335,37 @@ th {
   color: #0369a1;
 }
 
+.status-badge.on-leave {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+
+.status-badge.pending {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.status-badge.approved {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.status-badge.rejected {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.status-badge.cancelled {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
 .stat-non-working {
   color: #0284c7 !important;
+}
+
+.stat-on-leave {
+  color: #9333ea !important;
 }
 
 .holiday-badge {

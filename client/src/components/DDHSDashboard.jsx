@@ -32,6 +32,28 @@ function DDHSDashboard({ user, onLogout }) {
   const [modalSubmitting, setModalSubmitting] = useState(false);
   const [modalError, setModalError] = useState("");
 
+  // Division Leave Monitoring State
+  const [leaves, setLeaves] = useState([]);
+  const [leaveSummary, setLeaveSummary] = useState({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+    cancelled: 0,
+    total: 0,
+    onLeaveToday: 0,
+  });
+  const [leavesPagination, setLeavesPagination] = useState({ page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+  const [leaveCurrentPage, setLeaveCurrentPage] = useState(1);
+  const [leaveCentreFilter, setLeaveCentreFilter] = useState("");
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState("");
+  const [leaveDoctorFilter, setLeaveDoctorFilter] = useState("");
+  const [leaveTypeFilter, setLeaveTypeFilter] = useState("");
+  const [leavesLoading, setLeavesLoading] = useState(true);
+  const [leavesError, setLeavesError] = useState("");
+
+  // Leave Details Modal State
+  const [selectedLeave, setSelectedLeave] = useState(null);
+
   // District Period Report
   const defaultStartDate = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const defaultEndDate = new Date().toISOString().slice(0, 10);
@@ -151,7 +173,62 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // 3. Fetch District Period Report
+  // 3. Fetch Division Leaves & Summary
+  const fetchLeaves = async (page = 1) => {
+    try {
+      setLeavesLoading(true);
+      setLeavesError("");
+
+      // Fetch summary
+      const summaryUrl = leaveCentreFilter
+        ? `http://localhost:5000/api/leaves/summary?healthCentre=${encodeURIComponent(leaveCentreFilter)}`
+        : "http://localhost:5000/api/leaves/summary";
+
+      const summaryRes = await fetch(summaryUrl, { credentials: "include" });
+      if (summaryRes.status === 401) {
+        onLogout();
+        return;
+      }
+      const summaryData = await summaryRes.json();
+      if (summaryRes.ok && summaryData.summary) {
+        setLeaveSummary(summaryData.summary);
+      }
+
+      // Fetch filtered leave list
+      const params = new URLSearchParams();
+      params.set("page", page.toString());
+      params.set("limit", "10");
+      if (leaveCentreFilter) params.set("healthCentre", leaveCentreFilter);
+      if (leaveStatusFilter) params.set("status", leaveStatusFilter);
+      if (leaveDoctorFilter) params.set("doctorEmail", leaveDoctorFilter);
+      if (leaveTypeFilter) params.set("leaveType", leaveTypeFilter);
+
+      const leaveRes = await fetch(`http://localhost:5000/api/leaves/ddhs?${params.toString()}`, {
+        credentials: "include",
+      });
+
+      if (leaveRes.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const leaveData = await leaveRes.json();
+      if (!leaveRes.ok) {
+        throw new Error(leaveData.message || "Failed to load division leave requests");
+      }
+
+      setLeaves(leaveData.leaves || []);
+      setLeavesPagination(leaveData.pagination || { page: 1, limit: 10, totalPages: 1, totalItems: 0 });
+      setLeaveCurrentPage(leaveData.pagination?.page || 1);
+    } catch (err) {
+      console.error("Fetch DDHS leaves error:", err);
+      setLeavesError(err.message || "Could not load leave records");
+    } finally {
+      setLeavesLoading(false);
+    }
+  };
+
+  // 4. Fetch District Period Report
   const fetchDistrictReport = async () => {
     try {
       setReportLoading(true);
@@ -172,21 +249,21 @@ function DDHSDashboard({ user, onLogout }) {
         return;
       }
 
-      const reportResult = await res.json();
+      const result = await res.json();
       if (!res.ok) {
-        throw new Error(reportResult.message || "Failed to load district report");
+        throw new Error(result.message || "Failed to load district report");
       }
 
-      setReportData(reportResult);
+      setReportData(result);
     } catch (err) {
       console.error("Fetch district report error:", err);
-      setReportError(err.message || "Could not load district report");
+      setReportError(err.message || "Could not load report");
     } finally {
       setReportLoading(false);
     }
   };
 
-  // 4. Fetch Division Attendance History
+  // 5. Fetch Division Attendance History
   const fetchDivisionHistory = async (page = 1) => {
     try {
       setHistoryLoading(true);
@@ -210,23 +287,23 @@ function DDHSDashboard({ user, onLogout }) {
         return;
       }
 
-      const data = await res.json();
+      const result = await res.json();
       if (!res.ok) {
-        throw new Error(data.message || "Failed to load division history");
+        throw new Error(result.message || "Failed to load attendance history");
       }
 
-      setHistoryItems(data.items || []);
-      setPagination(data.pagination || { page: 1, limit: 15, totalPages: 1, totalItems: 0 });
-      setCurrentPage(data.pagination?.page || 1);
+      setHistoryItems(result.items || []);
+      setPagination(result.pagination || { page: 1, limit: 15, totalPages: 1, totalItems: 0 });
+      setCurrentPage(result.pagination?.page || 1);
     } catch (err) {
-      console.error("Fetch division history error:", err);
-      setHistoryError(err.message || "Could not load division history");
+      console.error("Fetch history error:", err);
+      setHistoryError(err.message || "Could not load history");
     } finally {
       setHistoryLoading(false);
     }
   };
 
-  // 5. Fetch Holidays
+  // 6. Fetch Holidays
   const fetchHolidays = async () => {
     try {
       setHolidaysLoading(true);
@@ -239,9 +316,9 @@ function DDHSDashboard({ user, onLogout }) {
         return;
       }
 
-      const holidayData = await res.json();
+      const result = await res.json();
       if (res.ok) {
-        setHolidays(holidayData.holidays || []);
+        setHolidays(result.holidays || []);
       }
     } catch (err) {
       console.error("Fetch holidays error:", err);
@@ -250,19 +327,19 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // 6. Create Holiday
+  // 7. Create Holiday (DDHS can create DISTRICT or CENTRE holidays)
   const handleCreateHoliday = async (e) => {
     e.preventDefault();
     setHolidayMsg("");
     setHolidayErr("");
 
     if (!holidayForm.name || !holidayForm.date) {
-      setHolidayErr("Please provide holiday name and date.");
+      setHolidayErr("Holiday name and date are required.");
       return;
     }
 
     if (holidayForm.scope === "CENTRE" && !holidayForm.healthCentre) {
-      setHolidayErr("Please specify target health centre for centre-specific holiday.");
+      setHolidayErr("Please specify the target health centre for a centre-scoped holiday.");
       return;
     }
 
@@ -277,17 +354,17 @@ function DDHSDashboard({ user, onLogout }) {
           date: holidayForm.date,
           type: holidayForm.type,
           scope: holidayForm.scope,
-          healthCentre: holidayForm.scope === "CENTRE" ? holidayForm.healthCentre : undefined,
+          healthCentre: holidayForm.scope === "CENTRE" ? holidayForm.healthCentre : null,
           description: holidayForm.description,
         }),
       });
 
-      const resData = await res.json();
+      const result = await res.json();
       if (!res.ok) {
-        throw new Error(resData.message || "Failed to create holiday");
+        throw new Error(result.message || "Failed to create holiday");
       }
 
-      setHolidayMsg("Holiday created successfully!");
+      setHolidayMsg("Holiday successfully registered.");
       setHolidayForm({
         name: "",
         date: "",
@@ -302,13 +379,13 @@ function DDHSDashboard({ user, onLogout }) {
       fetchDivisionHistory(currentPage);
     } catch (err) {
       console.error("Create holiday error:", err);
-      setHolidayErr(err.message || "Could not create holiday");
+      setHolidayErr(err.message || "Could not register holiday");
     } finally {
       setHolidaySubmitting(false);
     }
   };
 
-  // 7. Delete Holiday
+  // 8. Delete Holiday
   const handleDeleteHoliday = async (holidayId) => {
     if (!window.confirm("Are you sure you want to remove this holiday?")) {
       return;
@@ -320,9 +397,9 @@ function DDHSDashboard({ user, onLogout }) {
         credentials: "include",
       });
 
-      const resData = await res.json();
+      const result = await res.json();
       if (!res.ok) {
-        throw new Error(resData.message || "Failed to delete holiday");
+        throw new Error(result.message || "Failed to remove holiday");
       }
 
       fetchHolidays();
@@ -335,7 +412,7 @@ function DDHSDashboard({ user, onLogout }) {
     }
   };
 
-  // Modal Handlers for Alert Actions
+  // Alert Action Modal Handlers
   const openModal = (type, alert) => {
     setSelectedAlert(alert);
     setActiveModal(type);
@@ -358,12 +435,15 @@ function DDHSDashboard({ user, onLogout }) {
       setModalSubmitting(true);
       setModalError("");
 
-      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/acknowledge`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ actionNote: modalInput.trim() }),
-      });
+      const res = await fetch(
+        `http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/acknowledge`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ actionNote: modalInput.trim() }),
+        }
+      );
 
       const data = await res.json();
       if (!res.ok) {
@@ -391,12 +471,15 @@ function DDHSDashboard({ user, onLogout }) {
       setModalSubmitting(true);
       setModalError("");
 
-      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ note: modalInput.trim() }),
-      });
+      const res = await fetch(
+        `http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/notes`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ note: modalInput.trim() }),
+        }
+      );
 
       const data = await res.json();
       if (!res.ok) {
@@ -416,7 +499,7 @@ function DDHSDashboard({ user, onLogout }) {
     e.preventDefault();
     if (!selectedAlert) return;
     if (!modalInput.trim()) {
-      setModalError("Please provide a short resolution note (e.g. 'DDHS office approved leave' or 'Issue resolved').");
+      setModalError("Please enter a resolution note.");
       return;
     }
 
@@ -424,12 +507,15 @@ function DDHSDashboard({ user, onLogout }) {
       setModalSubmitting(true);
       setModalError("");
 
-      const res = await fetch(`http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ resolutionNote: modalInput.trim() }),
-      });
+      const res = await fetch(
+        `http://localhost:5000/api/alerts/${selectedAlert._id || selectedAlert.id}/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ resolutionNote: modalInput.trim() }),
+        }
+      );
 
       const data = await res.json();
       if (!res.ok) {
@@ -455,6 +541,10 @@ function DDHSDashboard({ user, onLogout }) {
   }, [alertCentreFilter, alertStatusFilter, alertSeverityFilter, alertDoctorFilter, alertEscalatedFilter]);
 
   useEffect(() => {
+    fetchLeaves(1);
+  }, [leaveCentreFilter, leaveStatusFilter, leaveDoctorFilter, leaveTypeFilter]);
+
+  useEffect(() => {
     fetchDistrictReport();
     fetchDivisionHistory(1);
   }, [startDate, endDate, centreFilter, historyStatusFilter]);
@@ -464,7 +554,7 @@ function DDHSDashboard({ user, onLogout }) {
       <header className="dashboard-header">
         <div>
           <h2>Health Monitoring System</h2>
-          <p>DDHS Division Portal</p>
+          <p>DDHS Division Health Administration Portal</p>
         </div>
 
         <button className="logout-btn" onClick={onLogout}>
@@ -481,7 +571,7 @@ function DDHSDashboard({ user, onLogout }) {
 
         {!loading && error && (
           <div className="table-card">
-            <h2>Unable to Load Division Overview</h2>
+            <h2>Unable to Load Division Data</h2>
             <p className="stat-absent">{error}</p>
           </div>
         )}
@@ -489,14 +579,18 @@ function DDHSDashboard({ user, onLogout }) {
         {!loading && !error && data && (
           <>
             <div className="welcome-section">
-              <h1>Division Attendance Overview</h1>
+              <h1>Division Health Overview ({data.date})</h1>
               <p>
-                Directorate of Health Services • Monitoring {data.totals.activeHealthCentres} Health Centres ({data.date})
+                Directorate of Health Services • Real-time Monitoring & Resource Oversight • Logged in: {user?.email || ""}
               </p>
             </div>
 
-            {/* Division Total Stats */}
+            {/* Division Total Overview Cards */}
             <div className="stats-grid">
+              <div className="stat-card">
+                <p>Active Centres</p>
+                <h2>{data.totals.activeHealthCentres}</h2>
+              </div>
               <div className="stat-card">
                 <p>Total Doctors</p>
                 <h2>{data.totals.totalDoctors}</h2>
@@ -510,6 +604,10 @@ function DDHSDashboard({ user, onLogout }) {
                 <h2 className="stat-absent">{data.totals.absent}</h2>
               </div>
               <div className="stat-card">
+                <p>On Leave Today</p>
+                <h2 className="stat-on-leave">{data.totals.onLeave || 0}</h2>
+              </div>
+              <div className="stat-card">
                 <p>Not Marked / Off</p>
                 <h2 className="stat-pending">
                   {data.totals.nonWorking
@@ -517,6 +615,169 @@ function DDHSDashboard({ user, onLogout }) {
                     : data.totals.notMarked}
                 </h2>
               </div>
+            </div>
+
+            {/* Division Doctor Leave Monitoring (Supervisory Read-Only) */}
+            <div className="table-card" style={{ marginTop: "30px" }}>
+              <div className="section-header-flex">
+                <div>
+                  <h2>Division Doctor Leave Monitoring</h2>
+                  <p style={{ margin: "4px 0 0", color: "#6b7280", fontSize: "14px" }}>
+                    Supervisory division-wide visibility of doctor leave requests, working-day deductions, and Centre Admin approval audits.
+                  </p>
+                </div>
+              </div>
+
+              {/* Leave Summary Counters */}
+              <div className="stats-grid" style={{ marginTop: "18px" }}>
+                <div className="stat-card" style={{ borderLeft: "4px solid #f59e0b" }}>
+                  <p>Pending Approvals</p>
+                  <h2 style={{ color: "#d97706" }}>{leaveSummary.pending}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #16a34a" }}>
+                  <p>Approved Leaves</p>
+                  <h2 style={{ color: "#16a34a" }}>{leaveSummary.approved}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #ef4444" }}>
+                  <p>Rejected Leaves</p>
+                  <h2 style={{ color: "#b91c1c" }}>{leaveSummary.rejected}</h2>
+                </div>
+                <div className="stat-card" style={{ borderLeft: "4px solid #0284c7" }}>
+                  <p>Doctors On Leave Today</p>
+                  <h2 style={{ color: "#0284c7" }}>{leaveSummary.onLeaveToday}</h2>
+                </div>
+              </div>
+
+              {/* Leave Filters */}
+              <div className="filter-bar" style={{ marginTop: "20px" }}>
+                <div className="filter-group">
+                  <label>Health Centre</label>
+                  <select
+                    value={leaveCentreFilter}
+                    onChange={(e) => setLeaveCentreFilter(e.target.value)}
+                  >
+                    <option value="">All Health Centres</option>
+                    {(data?.centres || []).map((c) => (
+                      <option key={c.name} value={c.name}>
+                        {c.name} ({c.type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Status</label>
+                  <select
+                    value={leaveStatusFilter}
+                    onChange={(e) => setLeaveStatusFilter(e.target.value)}
+                  >
+                    <option value="">All Statuses</option>
+                    <option value="PENDING">PENDING</option>
+                    <option value="APPROVED">APPROVED</option>
+                    <option value="REJECTED">REJECTED</option>
+                    <option value="CANCELLED">CANCELLED</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Leave Type</label>
+                  <select
+                    value={leaveTypeFilter}
+                    onChange={(e) => setLeaveTypeFilter(e.target.value)}
+                  >
+                    <option value="">All Types</option>
+                    <option value="CASUAL">Casual (CL)</option>
+                    <option value="SICK">Sick (SL)</option>
+                    <option value="EARNED">Earned (EL)</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Leave Table */}
+              {leavesLoading && <p style={{ color: "#6b7280", marginTop: "15px" }}>Loading division leave records...</p>}
+              {leavesError && <p style={{ color: "#dc2626", marginTop: "15px" }}>{leavesError}</p>}
+
+              {!leavesLoading && !leavesError && leaves.length === 0 && (
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>No leave requests found matching criteria.</p>
+              )}
+
+              {!leavesLoading && !leavesError && leaves.length > 0 && (
+                <>
+                  <div className="table-wrapper" style={{ marginTop: "15px" }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Health Centre</th>
+                          <th>Doctor</th>
+                          <th>Department</th>
+                          <th>Type</th>
+                          <th>Dates</th>
+                          <th>Working Days</th>
+                          <th>Reason</th>
+                          <th>Status</th>
+                          <th>Submitted On</th>
+                          <th>Review Note</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {leaves.map((l) => (
+                          <tr key={l._id}>
+                            <td><strong>{l.healthCentre}</strong></td>
+                            <td>
+                              <strong>{l.doctorName}</strong>
+                              <div style={{ fontSize: "12px", color: "#64748b" }}>{l.doctorEmail}</div>
+                            </td>
+                            <td>{l.department}</td>
+                            <td><span className="holiday-badge">{l.leaveType}</span></td>
+                            <td><strong>{l.startDate}</strong> to <strong>{l.endDate}</strong></td>
+                            <td><span style={{ fontWeight: "600", color: "#0284c7" }}>{l.numberOfWorkingDays} days</span></td>
+                            <td style={{ maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.reason}>
+                              {l.reason}
+                            </td>
+                            <td>
+                              <span className={`status-badge ${l.status.toLowerCase()}`}>
+                                {l.status}
+                              </span>
+                            </td>
+                            <td>{new Date(l.submittedAt || l.createdAt).toLocaleDateString("en-IN")}</td>
+                            <td>{l.reviewNote || "-"}</td>
+                            <td>
+                              <button
+                                className="alert-action-btn btn-detail"
+                                onClick={() => setSelectedLeave(l)}
+                              >
+                                Audit ({l.actions?.length || 1})
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="pagination-bar">
+                    <span>
+                      Page {leavesPagination.page} of {leavesPagination.totalPages || 1} ({leavesPagination.totalItems} total records)
+                    </span>
+                    <div className="pagination-buttons">
+                      <button
+                        disabled={leaveCurrentPage <= 1}
+                        onClick={() => fetchLeaves(leaveCurrentPage - 1)}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        disabled={leaveCurrentPage >= leavesPagination.totalPages}
+                        onClick={() => fetchLeaves(leaveCurrentPage + 1)}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Division-wide Absenteeism Alerts & Escalation Management */}
@@ -753,6 +1014,7 @@ function DDHSDashboard({ user, onLogout }) {
                       <th>Total Staff</th>
                       <th>Present</th>
                       <th>Absent</th>
+                      <th>On Leave</th>
                       <th>Not Marked / Off</th>
                       <th>Rate %</th>
                     </tr>
@@ -766,6 +1028,7 @@ function DDHSDashboard({ user, onLogout }) {
                         <td>{c.totalDoctors}</td>
                         <td className="table-present">{c.present}</td>
                         <td className="table-absent">{c.absent}</td>
+                        <td><span className="stat-on-leave">{c.onLeave || 0}</span></td>
                         <td>{c.nonWorking ? `${c.nonWorking} (Off)` : c.notMarked}</td>
                         <td>
                           <strong>{c.attendancePercentage}%</strong>
@@ -781,7 +1044,7 @@ function DDHSDashboard({ user, onLogout }) {
             <div className="table-card" style={{ marginTop: "30px" }}>
               <h2>District Attendance Reports & Analytics</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
-                Multi-centre analytics aggregated across eligible working days (excludes weekends and holidays)
+                Multi-centre analytics aggregated across eligible working days (approved leaves are excused and excluded from denominator)
               </p>
 
               {/* Filters */}
@@ -854,6 +1117,14 @@ function DDHSDashboard({ user, onLogout }) {
                       </h2>
                     </div>
                     <div className="stat-card">
+                      <p>Total On Leave</p>
+                      <h2 className="stat-on-leave">
+                        {reportData.overallStats?.onLeave !== undefined
+                          ? reportData.overallStats.onLeave
+                          : (reportData.onLeave ?? 0)}
+                      </h2>
+                    </div>
+                    <div className="stat-card">
                       <p>Division Attendance %</p>
                       <h2 className="stat-present">
                         {reportData.overallStats?.attendancePercentage !== undefined
@@ -873,6 +1144,7 @@ function DDHSDashboard({ user, onLogout }) {
                           <th>Total Staff</th>
                           <th>Present (Work)</th>
                           <th>Absent</th>
+                          <th>On Leave</th>
                           <th>Attendance %</th>
                         </tr>
                       </thead>
@@ -890,6 +1162,9 @@ function DDHSDashboard({ user, onLogout }) {
                             </td>
                             <td className="table-absent">
                               {cs.absent !== undefined ? cs.absent : (cs.absentDays ?? 0)}
+                            </td>
+                            <td>
+                              <span className="stat-on-leave">{cs.onLeave !== undefined ? cs.onLeave : (cs.onLeaveDays ?? 0)}</span>
                             </td>
                             <td>
                               <strong>{cs.attendancePercentage ?? 0}%</strong>
@@ -954,14 +1229,14 @@ function DDHSDashboard({ user, onLogout }) {
                       value={holidayForm.scope}
                       onChange={(e) => setHolidayForm({ ...holidayForm, scope: e.target.value })}
                     >
-                      <option value="DISTRICT">DISTRICT (All Centres)</option>
-                      <option value="CENTRE">CENTRE Specific</option>
+                      <option value="DISTRICT">District-wide (All Centres)</option>
+                      <option value="CENTRE">Specific Health Centre</option>
                     </select>
                   </div>
 
                   {holidayForm.scope === "CENTRE" && (
                     <div className="filter-group">
-                      <label>Target Centre *</label>
+                      <label>Target Health Centre *</label>
                       <select
                         value={holidayForm.healthCentre}
                         onChange={(e) => setHolidayForm({ ...holidayForm, healthCentre: e.target.value })}
@@ -983,40 +1258,41 @@ function DDHSDashboard({ user, onLogout }) {
                       value={holidayForm.type}
                       onChange={(e) => setHolidayForm({ ...holidayForm, type: e.target.value })}
                     >
-                      <option value="PUBLIC">PUBLIC</option>
-                      <option value="STATE">STATE</option>
-                      <option value="LOCAL">LOCAL</option>
-                      <option value="SPECIAL">SPECIAL</option>
+                      <option value="PUBLIC">Public Holiday</option>
+                      <option value="LOCAL">Local / Centre Specific</option>
+                      <option value="SPECIAL">Special Event</option>
                     </select>
                   </div>
+                </div>
 
-                  <div className="filter-group">
-                    <label>Description (Optional)</label>
-                    <input
-                      type="text"
-                      placeholder="Description"
-                      value={holidayForm.description}
-                      onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
-                    />
-                  </div>
+                <div className="filter-group" style={{ marginTop: "12px" }}>
+                  <label>Description / Details</label>
+                  <input
+                    type="text"
+                    placeholder="Optional description..."
+                    value={holidayForm.description}
+                    onChange={(e) => setHolidayForm({ ...holidayForm, description: e.target.value })}
+                  />
+                </div>
 
+                <div style={{ marginTop: "15px", display: "flex", alignItems: "center", gap: "15px" }}>
                   <button
                     type="submit"
                     className="attendance-btn"
-                    style={{ marginTop: 0, height: "42px", alignSelf: "flex-end" }}
+                    style={{ width: "auto", padding: "10px 24px", marginTop: 0 }}
                     disabled={holidaySubmitting}
                   >
-                    {holidaySubmitting ? "Adding..." : "+ Add Holiday"}
+                    {holidaySubmitting ? "Registering..." : "Register Holiday"}
                   </button>
-                </div>
 
-                {holidayMsg && <p style={{ color: "#16a34a", margin: "10px 0 0", fontSize: "14px" }}>{holidayMsg}</p>}
-                {holidayErr && <p style={{ color: "#dc2626", margin: "10px 0 0", fontSize: "14px" }}>{holidayErr}</p>}
+                  {holidayMsg && <span style={{ color: "#16a34a", fontWeight: "500", fontSize: "14px" }}>{holidayMsg}</span>}
+                  {holidayErr && <span style={{ color: "#dc2626", fontWeight: "500", fontSize: "14px" }}>{holidayErr}</span>}
+                </div>
               </form>
 
-              {/* Holiday List Table */}
-              <div style={{ marginTop: "20px" }}>
-                <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Registered Holidays</h4>
+              {/* Holidays Table */}
+              <div style={{ marginTop: "25px" }}>
+                <h3 style={{ fontSize: "16px", color: "#183153", marginBottom: "10px" }}>Active Holidays List</h3>
                 {holidaysLoading ? (
                   <p style={{ color: "#6b7280" }}>Loading holidays...</p>
                 ) : holidays.length === 0 ? (
@@ -1050,14 +1326,13 @@ function DDHSDashboard({ user, onLogout }) {
                               <button
                                 onClick={() => handleDeleteHoliday(h._id)}
                                 style={{
+                                  padding: "4px 8px",
                                   background: "#fee2e2",
                                   color: "#991b1b",
-                                  border: "1px solid #fca5a5",
-                                  padding: "4px 10px",
-                                  borderRadius: "6px",
-                                  fontSize: "12px",
-                                  fontWeight: 600,
+                                  border: "1px solid #fecaca",
+                                  borderRadius: "4px",
                                   cursor: "pointer",
+                                  fontSize: "12px",
                                 }}
                               >
                                 Delete
@@ -1072,29 +1347,14 @@ function DDHSDashboard({ user, onLogout }) {
               </div>
             </div>
 
-            {/* Division Detailed Attendance History Log */}
+            {/* Division Attendance History Log */}
             <div className="table-card" style={{ marginTop: "30px" }}>
-              <h2>Division Attendance Logs</h2>
+              <h2>Division Attendance History Logs</h2>
 
-              {/* Filter controls */}
+              {/* Filters */}
               <div className="filter-bar">
                 <div className="filter-group">
-                  <label>Health Centre</label>
-                  <select
-                    value={centreFilter}
-                    onChange={(e) => setCentreFilter(e.target.value)}
-                  >
-                    <option value="">All Health Centres</option>
-                    {(data?.centres || []).map((c) => (
-                      <option key={c.name} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="filter-group">
-                  <label>Status</label>
+                  <label>Status Filter</label>
                   <select
                     value={historyStatusFilter}
                     onChange={(e) => setHistoryStatusFilter(e.target.value)}
@@ -1102,6 +1362,7 @@ function DDHSDashboard({ user, onLogout }) {
                     <option value="">All Statuses</option>
                     <option value="Present">Present</option>
                     <option value="Absent">Absent</option>
+                    <option value="On Leave">On Leave</option>
                     <option value="Non-Working Day">Non-Working Day</option>
                     <option value="Not Marked">Not Marked</option>
                   </select>
@@ -1191,7 +1452,7 @@ function DDHSDashboard({ user, onLogout }) {
         )}
       </main>
 
-      {/* Action Modals */}
+      {/* Alert Action Modals */}
       {activeModal && selectedAlert && (
         <div className="modal-backdrop" onClick={closeModal}>
           <div className="modal-container" onClick={(e) => e.stopPropagation()}>
@@ -1348,6 +1609,69 @@ function DDHSDashboard({ user, onLogout }) {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Leave Details Audit Modal for DDHS */}
+      {selectedLeave && (
+        <div className="modal-backdrop" onClick={() => setSelectedLeave(null)}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Division Leave Request Details</h3>
+              <button type="button" className="modal-close-btn" onClick={() => setSelectedLeave(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ marginBottom: "16px", padding: "12px", background: "#f1f5f9", borderRadius: "8px" }}>
+                <h4 style={{ margin: "0 0 6px", color: "#183153" }}>{selectedLeave.doctorName} ({selectedLeave.healthCentre})</h4>
+                <p style={{ margin: "0", fontSize: "13px", color: "#475569" }}>
+                  Type: <strong>{selectedLeave.leaveType}</strong> • Dates: <strong>{selectedLeave.startDate} to {selectedLeave.endDate}</strong> ({selectedLeave.numberOfWorkingDays} working days)
+                </p>
+                <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#475569" }}>
+                  Status: <span className={`status-badge ${selectedLeave.status.toLowerCase()}`}>{selectedLeave.status}</span>
+                </p>
+                <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#334155" }}>
+                  Reason: <em>"{selectedLeave.reason}"</em>
+                </p>
+                {selectedLeave.reviewNote && (
+                  <p style={{ margin: "6px 0 0", fontSize: "13px", color: "#0369a1" }}>
+                    Review Note: <strong>{selectedLeave.reviewNote}</strong> (by {selectedLeave.reviewedBy || "Centre Admin"})
+                  </p>
+                )}
+              </div>
+
+              <h4 style={{ margin: "0 0 10px", color: "#183153" }}>Action Timeline</h4>
+              <div className="audit-timeline">
+                {(selectedLeave.actions && selectedLeave.actions.length > 0 ? selectedLeave.actions : [
+                  {
+                    action: "SUBMITTED",
+                    performedBy: selectedLeave.doctorEmail,
+                    role: "doctor",
+                    note: selectedLeave.reason,
+                    timestamp: selectedLeave.submittedAt || selectedLeave.createdAt,
+                  },
+                ]).map((entry, idx) => (
+                  <div className="timeline-item" key={entry._id || idx}>
+                    <div className={`timeline-dot ${entry.action.toLowerCase()}`} />
+                    <div className="timeline-content">
+                      <div className="timeline-meta">
+                        <span className="timeline-action-tag">{entry.action}</span>
+                        <span>{new Date(entry.timestamp).toLocaleString("en-IN")}</span>
+                      </div>
+                      <p className="timeline-note">{entry.note || "-"}</p>
+                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                        By: {entry.performedBy} ({entry.role})
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="alert-action-btn btn-detail" onClick={() => setSelectedLeave(null)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
