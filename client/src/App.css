@@ -80,8 +80,29 @@ body {
   cursor: pointer;
 }
 
-.login-form button:hover {
+.login-form button:hover:not(:disabled) {
   background: #1d4ed8;
+}
+
+.login-form button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: #60a5fa;
+}
+
+.login-error-banner {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  padding: 11px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.4;
 }
 .dashboard-page {
   min-height: 100vh;
@@ -669,6 +690,103 @@ th {
   100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
 }
 
+/* Severity Badges */
+.severity-badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.severity-badge.critical {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.severity-badge.high {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #ffedd5;
+}
+
+.severity-badge.medium {
+  background: #fefce8;
+  color: #a16207;
+  border: 1px solid #fef9c3;
+}
+
+/* Table Row Highlighting for Escalated & Critical Alerts */
+tr.row-escalated td {
+  background-color: #fff1f2 !important;
+}
+tr.row-escalated td:first-child {
+  border-left: 4px solid #b91c1c;
+}
+tr.row-escalated:hover td {
+  background-color: #ffe4e6 !important;
+}
+
+tr.row-critical td {
+  background-color: #fef2f2;
+}
+tr.row-critical td:first-child {
+  border-left: 4px solid #dc2626;
+}
+tr.row-critical:hover td {
+  background-color: #fee2e2;
+}
+
+/* Responsive Dashboard Header */
+@media (max-width: 650px) {
+  .dashboard-header {
+    padding: 14px 4%;
+    gap: 12px;
+  }
+
+  .dashboard-header h2 {
+    font-size: 1.25rem;
+  }
+
+  .dashboard-header p {
+    font-size: 0.85rem;
+  }
+
+  .logout-btn {
+    padding: 8px 14px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .dashboard-content {
+    width: 94%;
+    margin: 20px auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .dashboard-header {
+    padding: 12px 14px;
+  }
+
+  .dashboard-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .dashboard-header p {
+    font-size: 0.78rem;
+  }
+
+  .logout-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+}
+
 .alert-action-btn {
   padding: 5px 10px;
   border-radius: 6px;
@@ -853,4 +971,69 @@ th {
   color: #334155;
   font-size: 13px;
   white-space: pre-wrap;
+}
+
+/* Dashboard Quick Section-Jump Navigation Bar */
+html {
+  scroll-behavior: smooth;
+}
+
+.dashboard-nav-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+  margin-top: 20px;
+  margin-bottom: 25px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dashboard-nav-bar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.dashboard-nav-bar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.dashboard-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.dashboard-nav-link:hover {
+  background: #e2e8f0;
+  color: #1e293b;
+  border-color: #cbd5e1;
+}
+
+.dashboard-nav-link:active {
+  transform: scale(0.98);
+}
+
+/* Ensure sections jump with adequate offset under sticky headers */
+.table-card,
+.welcome-section {
+  scroll-margin-top: 75px;
 }

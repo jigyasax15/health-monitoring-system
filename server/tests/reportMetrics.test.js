@@ -95,4 +95,73 @@ describe("Report Metrics & Attendance Percentage Tests", () => {
     assert.equal(sundayRecord.isWorkingDay, false);
     assert.equal(sundayRecord.isRecorded, true);
   });
+
+  it("handles edge case where approved leave covers all scheduled working days (0 required working days -> 0% attendance without NaN)", () => {
+    // 5-day working week: Mon 2026-10-05 to Fri 2026-10-09
+    const dateList = [
+      "2026-10-05", // Mon
+      "2026-10-06", // Tue
+      "2026-10-07", // Wed
+      "2026-10-08", // Thu
+      "2026-10-09", // Fri
+    ];
+
+    const approvedLeaves = [
+      {
+        doctorEmail: "doctor@test.com",
+        startDate: "2026-10-05",
+        endDate: "2026-10-09",
+        status: "APPROVED",
+      },
+    ];
+
+    const attendanceMap = new Map(); // Doctor did not mark attendance because on approved leave
+
+    const metrics = calculateDoctorMetricsForDates(
+      doctor,
+      dateList,
+      attendanceMap,
+      "2026-10-15",
+      [],
+      {
+        referenceDate: new Date("2026-10-15T12:00:00Z"),
+        approvedLeaves,
+      }
+    );
+
+    assert.equal(metrics.totalDays, 5);
+    assert.equal(metrics.eligibleWorkingDays, 5);
+    assert.equal(metrics.onLeaveDays, 5);
+    assert.equal(metrics.attendanceRequiredWorkingDays, 0); // 5 eligible - 5 on leave = 0
+    assert.equal(metrics.presentWorkingDays, 0);
+    assert.equal(metrics.absentDays, 0); // Doctor is on approved leave, NOT absent
+    assert.equal(metrics.attendancePercentage, 0);
+    assert.equal(Number.isNaN(metrics.attendancePercentage), false, "attendancePercentage must not be NaN");
+    assert.equal(Number.isFinite(metrics.attendancePercentage), true, "attendancePercentage must be a finite number");
+  });
+
+  it("handles edge case where reporting range consists strictly of non-working days without NaN", () => {
+    // Weekend only: Sat 2026-10-10 to Sun 2026-10-11
+    const dateList = ["2026-10-10", "2026-10-11"];
+    const attendanceMap = new Map();
+
+    const metrics = calculateDoctorMetricsForDates(
+      doctor,
+      dateList,
+      attendanceMap,
+      "2026-10-15",
+      [],
+      { referenceDate: new Date("2026-10-15T12:00:00Z") }
+    );
+
+    assert.equal(metrics.totalDays, 2);
+    assert.equal(metrics.eligibleWorkingDays, 0);
+    assert.equal(metrics.attendanceRequiredWorkingDays, 0);
+    assert.equal(metrics.presentWorkingDays, 0);
+    assert.equal(metrics.absentDays, 0);
+    assert.equal(metrics.nonWorkingDays, 2);
+    assert.equal(metrics.attendancePercentage, 0);
+    assert.equal(Number.isNaN(metrics.attendancePercentage), false, "attendancePercentage must not be NaN");
+    assert.equal(Number.isFinite(metrics.attendancePercentage), true, "attendancePercentage must be a finite number");
+  });
 });

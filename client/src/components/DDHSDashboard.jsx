@@ -87,6 +87,7 @@ function DDHSDashboard({ user, onLogout }) {
   const [holidaySubmitting, setHolidaySubmitting] = useState(false);
   const [holidayMsg, setHolidayMsg] = useState("");
   const [holidayErr, setHolidayErr] = useState("");
+  const [deletingHolidayId, setDeletingHolidayId] = useState(null);
 
   // 1. Fetch Today's Overview
   const fetchTodayOverview = async () => {
@@ -387,11 +388,13 @@ function DDHSDashboard({ user, onLogout }) {
 
   // 8. Delete Holiday
   const handleDeleteHoliday = async (holidayId) => {
+    if (deletingHolidayId) return;
     if (!window.confirm("Are you sure you want to remove this holiday?")) {
       return;
     }
 
     try {
+      setDeletingHolidayId(holidayId);
       const res = await fetch(`http://localhost:5000/api/holidays/${holidayId}`, {
         method: "DELETE",
         credentials: "include",
@@ -409,6 +412,8 @@ function DDHSDashboard({ user, onLogout }) {
     } catch (err) {
       console.error("Delete holiday error:", err);
       alert(err.message || "Could not delete holiday");
+    } finally {
+      setDeletingHolidayId(null);
     }
   };
 
@@ -578,12 +583,23 @@ function DDHSDashboard({ user, onLogout }) {
 
         {!loading && !error && data && (
           <>
-            <div className="welcome-section">
+            <div id="ddhs-overview" className="welcome-section">
               <h1>Division Health Overview ({data.date})</h1>
               <p>
                 Directorate of Health Services • Real-time Monitoring & Resource Oversight • Logged in: {user?.email || ""}
               </p>
             </div>
+
+            {/* Quick Section-Jump Navigation */}
+            <nav className="dashboard-nav-bar" aria-label="Division Dashboard Sections">
+              <a href="#ddhs-overview" className="dashboard-nav-link">Division Overview</a>
+              <a href="#ddhs-leaves" className="dashboard-nav-link">Leave Monitoring</a>
+              <a href="#ddhs-alerts" className="dashboard-nav-link">Absenteeism Alerts</a>
+              <a href="#ddhs-centres" className="dashboard-nav-link">Centre Breakdown</a>
+              <a href="#ddhs-reports" className="dashboard-nav-link">District Reports</a>
+              <a href="#ddhs-holidays" className="dashboard-nav-link">Holiday Policies</a>
+              <a href="#ddhs-logs" className="dashboard-nav-link">Division Logs</a>
+            </nav>
 
             {/* Division Total Overview Cards */}
             <div className="stats-grid">
@@ -618,7 +634,7 @@ function DDHSDashboard({ user, onLogout }) {
             </div>
 
             {/* Division Doctor Leave Monitoring (Supervisory Read-Only) */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="ddhs-leaves" className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
                   <h2>Division Doctor Leave Monitoring</h2>
@@ -781,7 +797,7 @@ function DDHSDashboard({ user, onLogout }) {
             </div>
 
             {/* Division-wide Absenteeism Alerts & Escalation Management */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="ddhs-alerts" className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
                   <h2>Division Absenteeism Alerts & Escalation Management</h2>
@@ -902,7 +918,16 @@ function DDHSDashboard({ user, onLogout }) {
                           const isResolved = alert.status === "RESOLVED" || alert.resolved;
                           const isAck = alert.status === "ACKNOWLEDGED";
                           return (
-                            <tr key={alert._id || alert.id}>
+                            <tr
+                              key={alert._id || alert.id}
+                              className={
+                                alert.isEscalated
+                                  ? "row-escalated"
+                                  : alert.severity === "critical"
+                                  ? "row-critical"
+                                  : ""
+                              }
+                            >
                               <td>
                                 <strong>{alert.healthCentre}</strong>
                               </td>
@@ -1001,47 +1026,53 @@ function DDHSDashboard({ user, onLogout }) {
             </div>
 
             {/* Centre Breakdown Table */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="ddhs-centres" className="table-card" style={{ marginTop: "30px" }}>
               <h2>Health Centre Status Breakdown</h2>
 
-              <div className="table-wrapper">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Health Centre</th>
-                      <th>Type</th>
-                      <th>District</th>
-                      <th>Total Staff</th>
-                      <th>Present</th>
-                      <th>Absent</th>
-                      <th>On Leave</th>
-                      <th>Not Marked / Off</th>
-                      <th>Rate %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data?.centres || []).map((c) => (
-                      <tr key={c.id}>
-                        <td><strong>{c.name}</strong></td>
-                        <td>{c.type}</td>
-                        <td>{c.district}</td>
-                        <td>{c.totalDoctors}</td>
-                        <td className="table-present">{c.present}</td>
-                        <td className="table-absent">{c.absent}</td>
-                        <td><span className="stat-on-leave">{c.onLeave || 0}</span></td>
-                        <td>{c.nonWorking ? `${c.nonWorking} (Off)` : c.notMarked}</td>
-                        <td>
-                          <strong>{c.attendancePercentage}%</strong>
-                        </td>
+              {(!data?.centres || data.centres.length === 0) ? (
+                <p style={{ color: "#6b7280", marginTop: "15px" }}>
+                  No health centres registered in this division.
+                </p>
+              ) : (
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Health Centre</th>
+                        <th>Type</th>
+                        <th>District</th>
+                        <th>Total Staff</th>
+                        <th>Present</th>
+                        <th>Absent</th>
+                        <th>On Leave</th>
+                        <th>Not Marked / Off</th>
+                        <th>Rate %</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {data.centres.map((c) => (
+                        <tr key={c.id}>
+                          <td><strong>{c.name}</strong></td>
+                          <td>{c.type}</td>
+                          <td>{c.district}</td>
+                          <td>{c.totalDoctors}</td>
+                          <td className="table-present">{c.present}</td>
+                          <td className="table-absent">{c.absent}</td>
+                          <td><span className="stat-on-leave">{c.onLeave || 0}</span></td>
+                          <td>{c.nonWorking ? `${c.nonWorking} (Off)` : c.notMarked}</td>
+                          <td>
+                            <strong>{c.attendancePercentage}%</strong>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             {/* District Attendance Report Section */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="ddhs-reports" className="table-card" style={{ marginTop: "30px" }}>
               <h2>District Attendance Reports & Analytics</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
                 Multi-centre analytics aggregated across eligible working days (approved leaves are excused and excluded from denominator)
@@ -1136,50 +1167,56 @@ function DDHSDashboard({ user, onLogout }) {
 
                   {/* Centre-wise Performance Table */}
                   <h3 style={{ marginTop: "25px", color: "#183153" }}>Centre Performance Summary</h3>
-                  <div className="table-wrapper">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Health Centre</th>
-                          <th>Total Staff</th>
-                          <th>Present (Work)</th>
-                          <th>Absent</th>
-                          <th>On Leave</th>
-                          <th>Attendance %</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(reportData.centreComparison || reportData.centreSummary || []).map((cs) => (
-                          <tr key={cs.id || cs.name || cs.centreName}>
-                            <td><strong>{cs.name || cs.centreName}</strong></td>
-                            <td>{cs.totalDoctors ?? 0}</td>
-                            <td className="table-present">
-                              {cs.presentWorking !== undefined
-                                ? cs.presentWorking
-                                : (cs.presentWorkingDays !== undefined
-                                    ? cs.presentWorkingDays
-                                    : cs.presentDays ?? cs.present ?? 0)}
-                            </td>
-                            <td className="table-absent">
-                              {cs.absent !== undefined ? cs.absent : (cs.absentDays ?? 0)}
-                            </td>
-                            <td>
-                              <span className="stat-on-leave">{cs.onLeave !== undefined ? cs.onLeave : (cs.onLeaveDays ?? 0)}</span>
-                            </td>
-                            <td>
-                              <strong>{cs.attendancePercentage ?? 0}%</strong>
-                            </td>
+                  {((reportData.centreComparison || reportData.centreSummary || []).length === 0) ? (
+                    <p style={{ color: "#6b7280", marginTop: "10px" }}>
+                      No centre performance records found for this period.
+                    </p>
+                  ) : (
+                    <div className="table-wrapper">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Health Centre</th>
+                            <th>Total Staff</th>
+                            <th>Present (Work)</th>
+                            <th>Absent</th>
+                            <th>On Leave</th>
+                            <th>Attendance %</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {(reportData.centreComparison || reportData.centreSummary || []).map((cs) => (
+                            <tr key={cs.id || cs.name || cs.centreName}>
+                              <td><strong>{cs.name || cs.centreName}</strong></td>
+                              <td>{cs.totalDoctors ?? 0}</td>
+                              <td className="table-present">
+                                {cs.presentWorking !== undefined
+                                  ? cs.presentWorking
+                                  : (cs.presentWorkingDays !== undefined
+                                      ? cs.presentWorkingDays
+                                      : cs.presentDays ?? cs.present ?? 0)}
+                              </td>
+                              <td className="table-absent">
+                                {cs.absent !== undefined ? cs.absent : (cs.absentDays ?? 0)}
+                              </td>
+                              <td>
+                                <span className="stat-on-leave">{cs.onLeave !== undefined ? cs.onLeave : (cs.onLeaveDays ?? 0)}</span>
+                              </td>
+                              <td>
+                                <strong>{cs.attendancePercentage ?? 0}%</strong>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </>
               )}
             </div>
 
             {/* Division-Wide Holiday Management Section */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="ddhs-holidays" className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
                   <h2>Division & Centre Holiday Policies</h2>
@@ -1325,17 +1362,18 @@ function DDHSDashboard({ user, onLogout }) {
                             <td>
                               <button
                                 onClick={() => handleDeleteHoliday(h._id)}
+                                disabled={deletingHolidayId === h._id}
                                 style={{
                                   padding: "4px 8px",
-                                  background: "#fee2e2",
-                                  color: "#991b1b",
+                                  background: deletingHolidayId === h._id ? "#f1f5f9" : "#fee2e2",
+                                  color: deletingHolidayId === h._id ? "#94a3b8" : "#991b1b",
                                   border: "1px solid #fecaca",
                                   borderRadius: "4px",
-                                  cursor: "pointer",
+                                  cursor: deletingHolidayId === h._id ? "not-allowed" : "pointer",
                                   fontSize: "12px",
                                 }}
                               >
-                                Delete
+                                {deletingHolidayId === h._id ? "Deleting..." : "Delete"}
                               </button>
                             </td>
                           </tr>
@@ -1348,7 +1386,7 @@ function DDHSDashboard({ user, onLogout }) {
             </div>
 
             {/* Division Attendance History Log */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="ddhs-logs" className="table-card" style={{ marginTop: "30px" }}>
               <h2>Division Attendance History Logs</h2>
 
               {/* Filters */}

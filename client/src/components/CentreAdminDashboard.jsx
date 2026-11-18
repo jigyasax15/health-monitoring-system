@@ -88,6 +88,7 @@ function CentreAdminDashboard({ user, onLogout }) {
   const [holidaySubmitting, setHolidaySubmitting] = useState(false);
   const [holidayMsg, setHolidayMsg] = useState("");
   const [holidayErr, setHolidayErr] = useState("");
+  const [deletingHolidayId, setDeletingHolidayId] = useState(null);
 
   const assignedCentre = user?.healthCentre;
 
@@ -390,11 +391,13 @@ function CentreAdminDashboard({ user, onLogout }) {
 
   // 8. Delete Centre Holiday
   const handleDeleteHoliday = async (holidayId) => {
+    if (deletingHolidayId) return;
     if (!window.confirm("Are you sure you want to remove this centre holiday?")) {
       return;
     }
 
     try {
+      setDeletingHolidayId(holidayId);
       const res = await fetch(`http://localhost:5000/api/holidays/${holidayId}`, {
         method: "DELETE",
         credentials: "include",
@@ -412,6 +415,8 @@ function CentreAdminDashboard({ user, onLogout }) {
     } catch (err) {
       console.error("Delete holiday error:", err);
       alert(err.message || "Could not delete holiday");
+    } finally {
+      setDeletingHolidayId(null);
     }
   };
 
@@ -657,12 +662,23 @@ function CentreAdminDashboard({ user, onLogout }) {
 
         {!loading && !error && summary && (
           <>
-            <div className="welcome-section">
+            <div id="centre-overview" className="welcome-section">
               <h1>{summary.healthCentre}</h1>
               <p>
                 Daily Staff Monitoring Dashboard • {user?.name || "Admin"} ({user?.email || ""})
               </p>
             </div>
+
+            {/* Quick Section-Jump Navigation */}
+            <nav className="dashboard-nav-bar" aria-label="Dashboard Sections">
+              <a href="#centre-overview" className="dashboard-nav-link">Overview</a>
+              <a href="#centre-leaves" className="dashboard-nav-link">Leave Requests</a>
+              <a href="#centre-alerts" className="dashboard-nav-link">Alerts & Escalation</a>
+              <a href="#centre-roster" className="dashboard-nav-link">Today's Attendance</a>
+              <a href="#centre-reports" className="dashboard-nav-link">Reports & Analytics</a>
+              <a href="#centre-holidays" className="dashboard-nav-link">Holidays</a>
+              <a href="#centre-history" className="dashboard-nav-link">History Logs</a>
+            </nav>
 
             {/* Today's Overview Stats */}
             <div className="stats-grid">
@@ -691,7 +707,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             </div>
 
             {/* Doctor Leave Requests & Approvals Section */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="centre-leaves" className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
                   <h2>Doctor Leave Requests & Approval Workflow</h2>
@@ -870,7 +886,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             </div>
 
             {/* Absenteeism Alert Management & Escalation Section */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="centre-alerts" className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
                   <h2>Absenteeism Alerts & Escalation Management</h2>
@@ -1091,7 +1107,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             </div>
 
             {/* Today's Doctor Attendance Table */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="centre-roster" className="table-card" style={{ marginTop: "30px" }}>
               <h2>Today's Doctor Attendance ({summary.date})</h2>
 
               {summary.doctors.length === 0 ? (
@@ -1131,7 +1147,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             </div>
 
             {/* Period Attendance Report Section */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="centre-reports" className="table-card" style={{ marginTop: "30px" }}>
               <h2>Attendance Reports & Analytics</h2>
               <p style={{ margin: "4px 0 15px", color: "#6b7280" }}>
                 Comprehensive attendance aggregation for {summary.healthCentre} (approved leave days are excused and deducted from required percentage denominator)
@@ -1225,7 +1241,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             </div>
 
             {/* Holiday Management Section */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="centre-holidays" className="table-card" style={{ marginTop: "30px" }}>
               <div className="section-header-flex">
                 <div>
                   <h2>Health Centre & District Holiday Calendar</h2>
@@ -1334,17 +1350,18 @@ function CentreAdminDashboard({ user, onLogout }) {
                               {h.scope === "CENTRE" && h.healthCentre === assignedCentre ? (
                                 <button
                                   onClick={() => handleDeleteHoliday(h._id)}
+                                  disabled={deletingHolidayId === h._id}
                                   style={{
                                     padding: "4px 8px",
-                                    background: "#fee2e2",
-                                    color: "#991b1b",
+                                    background: deletingHolidayId === h._id ? "#f1f5f9" : "#fee2e2",
+                                    color: deletingHolidayId === h._id ? "#94a3b8" : "#991b1b",
                                     border: "1px solid #fecaca",
                                     borderRadius: "4px",
-                                    cursor: "pointer",
+                                    cursor: deletingHolidayId === h._id ? "not-allowed" : "pointer",
                                     fontSize: "12px",
                                   }}
                                 >
-                                  Remove
+                                  {deletingHolidayId === h._id ? "Removing..." : "Remove"}
                                 </button>
                               ) : (
                                 <span style={{ color: "#94a3b8", fontSize: "12px" }}>District (Read-only)</span>
@@ -1360,7 +1377,7 @@ function CentreAdminDashboard({ user, onLogout }) {
             </div>
 
             {/* Historical Attendance Log */}
-            <div className="table-card" style={{ marginTop: "30px" }}>
+            <div id="centre-history" className="table-card" style={{ marginTop: "30px" }}>
               <h2>Attendance History Log</h2>
 
               {/* Filters */}

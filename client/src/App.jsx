@@ -11,6 +11,8 @@ function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [loginError, setLoginError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Stores the message received from our Express backend
   const [backendMessage, setBackendMessage] = useState("");
@@ -57,13 +59,15 @@ function App() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setLoginError("");
 
     if (!email || !password || !role) {
-      alert("Please enter email, password and role");
+      setLoginError("Please enter email, password and role.");
       return;
     }
 
     try {
+      setIsLoggingIn(true);
       const response = await fetch("http://localhost:5000/api/login", {
         method: "POST",
         headers: {
@@ -80,7 +84,7 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Login failed");
+        setLoginError(data.message || "Invalid email, password or role.");
         return;
       }
 
@@ -89,9 +93,12 @@ function App() {
       setEmail(data.user.email);
       setRole(data.user.role);
       setLoggedIn(true);
+      setLoginError("");
     } catch (error) {
       console.error("Login error:", error);
-      alert("Could not connect to backend");
+      setLoginError("Could not connect to the backend server. Please verify the server is running.");
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -108,6 +115,7 @@ function App() {
       setUser(null);
       setEmail("");
       setPassword("");
+      setLoginError("");
     }
   };
 
@@ -168,6 +176,12 @@ function App() {
           {backendMessage || "Connecting to backend..."}
         </p>
 
+        {loginError && (
+          <div className="login-error-banner" role="alert">
+            <span>⚠️ {loginError}</span>
+          </div>
+        )}
+
         <form className="login-form" onSubmit={handleLogin}>
           <label>Email</label>
 
@@ -198,7 +212,9 @@ function App() {
             <option value="ddhs">DDHS Admin</option>
           </select>
 
-          <button type="submit">Login</button>
+          <button type="submit" disabled={isLoggingIn}>
+            {isLoggingIn ? "Logging in..." : "Login"}
+          </button>
         </form>
       </div>
     </div>
